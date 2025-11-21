@@ -47,6 +47,7 @@
   :hook (org-roam-mode . org-roam-ui-mode)
   :config
   (setq org-roam-ui-sync-theme t
+        org-hide-emphasis-markers t
         org-roam-ui-follow t
         org-roam-ui-update-on-save t
         org-roam-ui-open-on-start nil))
@@ -62,6 +63,7 @@
   :config (progn
             (load-theme 'ewal-doom-one t)
             (enable-theme 'ewal-doom-one)))
+
 
 ;; Uncomment the line below if you want to use a different ewal theme:
 ;; Options: ewal-doom-one, ewal-doom-vibrant, ewal-doom-dark
