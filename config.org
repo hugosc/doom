@@ -1,8 +1,9 @@
 #+TITLE: Doom Emacs Configuration
-#+AUTHOR: Maximo
+#+AUTHOR: Croc
 #+PROPERTY: header-args :tangle yes :cache yes :results silent :padline no
 
 * Table of Contents :TOC:
+
 - [[#introduction][Introduction]]
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
@@ -43,6 +44,23 @@ Set the general org-directory for agenda and other org features.
 
 #+begin_src emacs-lisp
 (setq org-directory "~/Documents/brain2/")
+#+end_src
+
+** Emacs Server
+
+Start the emacs server to allow emacsclient connections (required for daemon mode and pywal hooks).
+
+#+begin_src emacs-lisp
+(require 'server)
+(unless (server-running-p)
+  (server-start))
+
+;; Also ensure server starts if running in daemon mode
+(when (daemonp)
+  (add-hook 'after-make-frame-functions
+    (lambda (frame)
+      (when (not (server-running-p))
+        (server-start)))))
 #+end_src
 
 ** Auto-revert Mode
@@ -117,6 +135,42 @@ Helper function to reload the pywal theme after changing wallpaper:
   (ewal-load-colors)
   (load-theme 'ewal-doom-one t)
   (message "Pywal theme reloaded!"))
+#+end_src
+
+** Transparency Toggle and Pywal Auto-Reload
+
+Toggle emacs transparency to match kitty when Super+Shift+P is pressed.
+This makes emacs background respond dynamically to kitty opacity changes.
+
+Also set up file watcher to auto-reload theme when pywal colors change.
+
+#+begin_src emacs-lisp
+;; Toggle emacs frame alpha (transparency) to match kitty
+(defun toggle-emacs-transparency ()
+  "Toggle emacs frame transparency between opaque (100%) and semi-transparent (85%)."
+  (interactive)
+  (let* ((alpha-param (frame-parameter nil 'alpha-background))
+         (current-alpha (or alpha-param 100))
+         (new-alpha (if (>= current-alpha 95) 85 100)))
+    (set-frame-parameter nil 'alpha-background new-alpha)
+    (message "Emacs transparency: %d%%" new-alpha)))
+
+;; Watch for changes to pywal colors and reload theme automatically
+(defun my/watch-pywal-colors ()
+  "Set up file watcher for pywal colors.json to auto-reload theme."
+  (when (functionp 'file-notify-add-watch)
+    (let ((colors-file (expand-file-name "~/.cache/wal/colorscheme.json")))
+      (when (file-exists-p colors-file)
+        (file-notify-add-watch colors-file '(change)
+          (lambda (event)
+            (when (eq (nth 1 event) 'changed)
+              (reload-pywal-theme))))))))
+
+;; Auto-enable the color watcher when emacs starts
+(my/watch-pywal-colors)
+
+;; Set initial transparency to match kitty (85%)
+(set-frame-parameter nil 'alpha-background 85)
 #+end_src
 
 * Org-Roam Configuration
@@ -528,12 +582,128 @@ Automatically format org files with consistent spacing:
             (goto-char heading-pos)
             (forward-line 1))))))
   
-  ;; Run formatting on save
-  (add-hook 'org-mode-hook
-    (lambda ()
-      (add-hook 'before-save-hook #'my/org-format-buffer nil t))))
+   ;; Run formatting on save
+   (add-hook 'org-mode-hook
+     (lambda ()
+       (add-hook 'before-save-hook #'my/org-format-buffer nil t))))
 #+end_src
 
+* Zen Mode Customization
+
+Configure zen mode (writeroom-mode) with smaller font, wider margins, no line numbers, and hidden org stars.
+
+#+begin_src emacs-lisp
+(setq +zen-text-scale 1)           ;; Font size scale (1 = one size larger)
+(setq writeroom-width 70)          ;; Column width (narrower = wider margins)
+
+;; Configure org-modern to always be on for org-mode
+(after! org-modern
+  (setq org-modern-hide-stars 'leading)
+  ;; Enable org-modern globally
+  (add-hook 'org-mode-hook #'org-modern-mode))
+
+;; Zen mode hook - hide line numbers, adjust org-modern star display
+(add-hook 'writeroom-mode-hook
+  (lambda ()
+    (if writeroom-mode
+        (progn
+          (display-line-numbers-mode -1)
+          (when (derived-mode-p 'org-mode)
+            (setq-local org-modern-hide-stars t))
+          (text-scale-set 1))
+      (progn
+        ;; Restore when exiting zen mode
+        (display-line-numbers-mode 1)
+        (when (derived-mode-p 'org-mode)
+          (setq-local org-modern-hide-stars 'leading))))))
+#+end_src
+
+* Dashboard Customization
+
+#+begin_src emacs-lisp
+;; Use custom octopus ASCII art as the dashboard banner with minimal menu.
+#+end_src
+
+#+begin_src emacs-lisp
+(defun my/doom-dashboard-octopus ()
+  "Insert octopus ASCII art for dashboard."
+  (let ((octopus-file (expand-file-name "~/.config/doom/banners/octopus.txt")))
+    (when (file-readable-p octopus-file)
+      (insert
+       (with-temp-buffer
+         (insert-file-contents octopus-file)
+         (buffer-string))))))
+
+(setq +doom-dashboard-ascii-banner-fn #'my/doom-dashboard-octopus)
+
+;; Minimal menu - just open project and open docs
+(setq +doom-dashboard-menu-sections
+      '(("Open project"
+         :icon (nerd-icons-octicon "nf-oct-briefcase" :face 'doom-dashboard-menu-title)
+         :action projectile-switch-project)
+        ("Open documentation"
+         :icon (nerd-icons-octicon "nf-oct-book" :face 'doom-dashboard-menu-title)
+         :action doom/help)))
+
+;; Custom shortmenu with tighter spacing - use single newline instead of double
+(defun my/doom-dashboard-widget-shortmenu ()
+  (insert "\n")
+  (dolist (section +doom-dashboard-menu-sections)
+    (cl-destructuring-bind (label &key icon action when face key) section
+      (when (and (fboundp action)
+                 (or (null when)
+                     (eval when t)))
+        (insert
+         (+doom-dashboard--center
+          (- +doom-dashboard--width 1)
+          (let ((icon (if (stringp icon) icon (eval icon t))))
+            (format (format "%s%%s%%-10s" (if icon "%3s\t" "%3s"))
+                    (or icon "")
+                    (with-temp-buffer
+                      (insert-text-button
+                       label
+                       'action
+                       `(lambda (_)
+                          (call-interactively (or (command-remapping #',action)
+                                                  #',action)))
+                       'face (or face 'doom-dashboard-menu-title)
+                       'follow-link t
+                       'help-echo
+                       (format "%s (%s)" label
+                               (propertize (symbol-name action) 'face 'doom-dashboard-menu-desc)))
+                      (format "%-37s" (buffer-string)))
+                    ;; Lookup command keys dynamically
+                    (propertize
+                     (or key
+                         (when-let*
+                             ((keymaps
+                               (delq
+                                nil (list (when (bound-and-true-p evil-local-mode)
+                                            (evil-get-auxiliary-keymap +doom-dashboard-mode-map 'normal))
+                                          +doom-dashboard-mode-map)))
+                              (key
+                               (or (when keymaps
+                                     (where-is-internal action keymaps t))
+                                   (where-is-internal action nil t))))
+                           (with-temp-buffer
+                             (save-excursion (insert (key-description key)))
+                             (while (re-search-forward "<\\([^>]+\\)>" nil t)
+                               (let ((str (match-string 1)))
+                                 (replace-match
+                                  (upcase (if (< (length str) 3)
+                                              str
+                                            (substring str 0 3))))))
+                             (buffer-string)))
+                         "")
+                     'face 'doom-dashboard-menu-desc))))
+         "\n")))))  ;; Use single \n instead of \n\n
+
+;; Override dashboard widgets - remove loaded time, keep banner and menu
+(setq +doom-dashboard-functions
+      '(doom-dashboard-widget-banner
+        my/doom-dashboard-widget-shortmenu
+        doom-dashboard-widget-footer))
+#+end_src
 
 <!-- Local Variables: -->
 <!-- gptel-model: gpt-5-mini -->
