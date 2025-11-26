@@ -21,6 +21,7 @@
 - [[#file-navigation][File Navigation]]
 - [[#ai-integration-gptel][AI Integration: GPTel]]
 - [[#org-agenda][Org Agenda]]
+- [[#org-formatting][Org Formatting]]
 
 * Introduction
 
@@ -133,7 +134,6 @@ Configure org-roam-ui for visual graph navigation of my knowledge base.
   :hook (org-roam-mode . org-roam-ui-mode)
   :config
   (setq org-roam-ui-sync-theme t
-        org-hide-emphasis-markers t
         org-roam-ui-follow t
         org-roam-ui-update-on-save t
         org-roam-ui-open-on-start nil))
@@ -160,7 +160,7 @@ My capture templates support different types of content in my knowledge system:
                               "#+TITLE: %<%Y-%m-%d> ${title} Lecture\n#+FILETAGS: :lecture:raw:\n")
            :unnarrowed t)
           ("c" "Concept node" plain
-           "* Definition\n%?\n* Context\n* Relations\n* Applications\n* References"
+           "* Overview\n%?\n* Context\n* Relations\n* Applications\n* References"
            :if-new (file+head "concepts/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :concept:seed:\n")
            :unnarrowed t)
           ("r" "Reading note" plain
@@ -192,29 +192,120 @@ My capture templates support different types of content in my knowledge system:
 *** Promote Heading to Concept
 
 This function extracts a heading from a lecture or inbox note and promotes it
-to a standalone concept node, replacing the original heading with a link.
+to a standalone concept node. The heading's contents are copied into the new
+concept file under the =* Overview= section, and a reference link to the original
+heading is added to the concept's =* References= section. The original heading
+is preserved (not deleted).
 
 #+begin_src emacs-lisp
   (defun my/org-roam-promote-heading-to-concept ()
-    "Convert current heading into a new concept node, replacing it with a link."
+    "Promote current heading into a new concept node.
+
+This:
+- Creates `concepts/<slug>.org` (if missing) with a scaffold that uses '* Overview'.
+- Copies the current heading's subtree (content below the heading line) into
+  the new file under '* Overview' (appends).
+- Transfers the original heading's ID to the new file (if it exists), so existing
+  links to that heading automatically resolve to the new concept file.
+- Removes the ID from the original heading to avoid duplicates.
+- Inserts a link to the new concept in the original file's '* Relations' section as a bullet point.
+
+It does NOT delete or replace the original heading." 
     (interactive)
-    (unless (org-at-heading-p) (user-error "Not at a heading"))
+    (unless (org-at-heading-p)
+      (user-error "Not at a heading"))
+
     (let* ((title (nth 4 (org-heading-components)))
-           (slug (org-roam-node-slug (org-roam-node-create :title title)))
+           (node (org-roam-node-create :title title))
+           (slug (org-roam-node-slug node))
            (file (expand-file-name (format "concepts/%s.org" slug) org-roam-directory))
-           (id (org-id-get-create)))
-      (unless (file-exists-p file)
-        (with-temp-file file
-          (insert (format "#+TITLE: %s\n#+FILETAGS: :concept:seed:\n* Definition\n%s\n* Context\n* Relations\n* Applications\n* References\n" title ""))))
-      (let ((new-id (with-current-buffer (find-file-noselect file)
-                      (goto-char (point-min))
-                      (org-id-get-create))))
-        (org-back-to-heading t)
-        (let ((beg (point))
-              (end (save-excursion (org-end-of-subtree t t))))
-          (delete-region beg end)
-          (insert (format "[[id:%s][%s]]" new-id title))))
-      (message "Promoted heading '%s' to concept node." title)))
+           ;; original subtree bounds
+           (orig-beg (save-excursion (org-back-to-heading t) (point)))
+           (orig-end (save-excursion (org-end-of-subtree t t)))
+           ;; body = text after the heading line up to end of subtree
+           (body (save-restriction
+                   (widen)
+                   (when (> orig-end orig-beg)
+                     (save-excursion
+                       (goto-char orig-beg)
+                       (forward-line 1)
+                       ;; Skip properties drawer if present
+                       (when (looking-at "^[ \t]*:PROPERTIES:")
+                         (when (re-search-forward "^[ \t]*:END:" orig-end t)
+                           (forward-line 1)))
+                       ;; Skip any blank lines after properties
+                       (while (and (< (point) orig-end) (looking-at-p "^\\s-*$"))
+                         (forward-line 1))
+                       ;; Extract the actual content
+                       (let ((content-start (point)))
+                         (when (< content-start orig-end)
+                           (string-trim (buffer-substring-no-properties content-start orig-end)))))))))
+      ;; Ensure original heading has an ID so we can link to it later if needed
+      (let ((orig-id (save-excursion
+                       (org-back-to-heading t)
+                       (or (org-entry-get nil "ID")
+                           (org-id-get-create)))))
+        ;; Create scaffold if file doesn't exist
+        (unless (file-exists-p file)
+          (with-temp-file file
+            (insert ":PROPERTIES:\n:END:\n#+TITLE: " title "\n#+FILETAGS: :concept:seed:\n\n* Overview\n\n* Context\n* Relations\n* Applications\n* References\n")))
+        ;; Transfer or create ID: use heading's existing ID if present, otherwise generate new one
+        (let ((new-id (if orig-id
+                          ;; Use the original heading's ID for the new file
+                          (progn
+                            (with-current-buffer (find-file-noselect file)
+                              (goto-char (point-min))
+                              (when (re-search-forward "^:PROPERTIES:" nil t)
+                                (forward-line 1)
+                                (insert (format ":ID: %s\n" orig-id)))
+                              (save-buffer))
+                            ;; Delete entire properties drawer from original heading
+                            (save-excursion
+                              (org-back-to-heading t)
+                              (when (re-search-forward "^[ \t]*:PROPERTIES:" (save-excursion (outline-next-heading) (point)) t)
+                                (let ((beg (line-beginning-position)))
+                                  (when (re-search-forward "^[ \t]*:END:" (save-excursion (outline-next-heading) (point)) t)
+                                    (delete-region beg (1+ (line-end-position)))))))
+                            (save-buffer)
+                            orig-id)
+                        ;; No existing ID, generate a new one for the concept file
+                        (let ((generated-id (org-id-new)))
+                          (with-current-buffer (find-file-noselect file)
+                            (goto-char (point-min))
+                            (when (re-search-forward "^:PROPERTIES:" nil t)
+                              (forward-line 1)
+                              (insert (format ":ID: %s\n" generated-id)))
+                            (save-buffer))
+                          generated-id))))
+          ;; Insert body into Overview if present
+          (when (and body (not (string-empty-p (string-trim body))))
+            (with-current-buffer (find-file-noselect file)
+              (save-excursion
+                (goto-char (point-min))
+                (when (re-search-forward "^\\* Overview\\s-*$" nil t)
+                  (forward-line 1)
+                  ;; Clean up: remove any existing blank lines after Overview heading
+                  (while (looking-at-p "^\\s-*$")
+                    (delete-region (line-beginning-position) (1+ (line-end-position))))
+                  ;; Insert the trimmed body content
+                  (insert (string-trim body) "\n")
+                  (save-buffer)))))
+
+          ;; Insert a link to the NEW concept into the original file's *Relations section
+          (save-excursion
+            (goto-char (point-min))
+            (if (re-search-forward "^\\* Relations\\s-*$" nil t)
+                ;; Found Relations section, insert link
+                (progn
+                  (forward-line 1)
+                  (insert (format "- [[id:%s][%s]]\n" new-id title))
+                  (save-buffer))
+              ;; No Relations section, create one at end of file
+              (goto-char (point-max))
+              (unless (bolp) (insert "\n"))
+              (insert (format "* Relations\n- [[id:%s][%s]]\n" new-id title))
+              (save-buffer)))
+          (message "Promoted '%s' → %s (id:%s) and inserted link in original file" title file new-id)))))
 #+end_src
 
 *** Insert File Link
@@ -365,7 +456,82 @@ Configure org-agenda to search the entire brain2 directory for TODOs and schedul
 
 #+begin_src emacs-lisp
 (after! org
-  (setq org-agenda-files '("~/Documents/brain2/")))
+  (setq org-agenda-files '("~/Documents/brain2/")
+        org-hide-emphasis-markers t)
+  ;; Fallback: ensure emphasis markers are hidden when org-mode starts
+  (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
+#+end_src
+
+* Org Formatting
+
+Automatically format org files with consistent spacing:
+- No blank line between heading and properties drawer
+- Blank line after properties drawer before content
+- Blank line after headings before content
+
+#+begin_src emacs-lisp
+(after! org
+  (defun my/org-format-buffer ()
+    "Format org buffer with consistent spacing."
+    (interactive)
+    (message "Running org-format-buffer...")
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\*+ " nil t)
+        (let ((heading-pos (line-beginning-position)))
+          ;; Check if next line is properties drawer
+          (forward-line 1)
+          (when (looking-at "^[ \t]*:PROPERTIES:")
+            ;; Remove any blank lines between heading and properties
+            (goto-char heading-pos)
+            (forward-line 1)
+            (while (and (not (looking-at "^[ \t]*:PROPERTIES:"))
+                       (looking-at-p "^\\s-*$"))
+              (delete-region (line-beginning-position) (1+ (line-end-position))))
+            ;; Find end of properties
+            (when (re-search-forward "^[ \t]*:END:" nil t)
+              (forward-line 1)
+              ;; Ensure exactly one blank line after properties
+              (let ((content-start (point)))
+                (while (looking-at-p "^\\s-*$")
+                  (forward-line 1))
+                (unless (= (point) (1+ content-start))
+                  (delete-region content-start (point))
+                  (goto-char content-start)
+                  (unless (or (looking-at "^\\*") (eobp))
+                    (insert "\n"))))))
+          ;; If no properties, ensure blank line after heading
+          (goto-char heading-pos)
+          (forward-line 1)
+          (unless (or (looking-at "^[ \t]*:PROPERTIES:")
+                     (looking-at-p "^\\s-*$")
+                     (looking-at "^\\*")
+                     (eobp))
+            (insert "\n")))))
+    
+    ;; Ensure blank line before each heading (after content)
+    (save-excursion
+      (goto-char (point-min))
+      ;; Skip first heading
+      (when (re-search-forward "^\\*+ " nil t)
+        (beginning-of-line)
+        (while (re-search-forward "^\\*+ " nil t)
+          (beginning-of-line)
+          (let ((heading-pos (point)))
+            (forward-line -1)
+            ;; If previous line is not blank and not a heading, add blank line
+            (when (and (not (looking-at-p "^\\s-*$"))
+                       (not (looking-at "^\\*")))
+              (end-of-line)
+              (insert "\n"))
+            ;; Move past this heading to continue loop
+            (goto-char heading-pos)
+            (forward-line 1))))))
+  
+  ;; Run formatting on save
+  (add-hook 'org-mode-hook
+    (lambda ()
+      (add-hook 'before-save-hook #'my/org-format-buffer nil t))))
 #+end_src
 
 
