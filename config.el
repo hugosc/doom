@@ -292,6 +292,36 @@ It does NOT delete or replace the original heading."
   :config
   (setq gptel-model 'gpt-5-mini
         gptel-backend (gptel-make-gh-copilot "Copilot")))
+(use-package! presence
+  :defer t
+  :commands (presence-mode)
+  :init
+  (add-hook 'doom-first-buffer-hook #'presence-mode)
+  :config
+  ;; Use custom Discord application
+  (setq presence-client-id "1443438985878962228")
+  ;; Use asset keys directly (not URLs) for our custom Discord app
+  (setq presence-icon-base nil)
+  ;; Override to return just the asset key
+  (defun presence--resolve-icon-base (icon)
+    "Return just the icon asset key for Discord."
+    icon)
+  ;; Use custom icon from our Discord app
+  (setq presence-editor-icon "emacs-icon")
+  ;; Keep editor as main icon, mode as small icon
+  (setq presence-use-major-mode-as-main-icon nil)
+  ;; Show the small icon (mode icon)
+  (setq presence-show-small-icon t)
+  ;; Hide line numbers from status
+  (setq presence-display-line-numbers nil)
+  ;; Custom format: show project name + file instead of just buffer name
+  (defun my/presence-buffer-details ()
+    (let ((project (projectile-project-name))
+          (file (buffer-name)))
+      (if (and project (not (string= project "-")))
+          (format "In %s: %s" project file)
+        (format "Editing %s" file))))
+  (setq presence-buffer-details-format-function #'my/presence-buffer-details))
 (after! org
   (setq org-agenda-files '("~/Documents/brain2/")
         org-hide-emphasis-markers t)

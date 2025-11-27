@@ -59,3 +59,7 @@
 
 ;; Org Roam UI
 (package! org-roam-ui)
+
+;; Discord RPC/Presence
+(package! presence
+  :recipe (:host github :repo "richardhbtz/emacs-rpc"))
