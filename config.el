@@ -499,3 +499,9 @@ It does NOT delete or replace the original heading."
       '(doom-dashboard-widget-banner
         my/doom-dashboard-widget-shortmenu
         doom-dashboard-widget-footer))
+(after! vterm
+  (add-hook 'vterm-mode-hook
+    (lambda ()
+      ;; Remove ESC from evil-normal-state-map so it doesn't intercept in vterm
+      (evil-define-key 'insert vterm-mode-map
+        (kbd "<escape>") 'vterm-send-escape))))

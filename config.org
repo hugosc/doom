@@ -750,6 +750,20 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
         doom-dashboard-widget-footer))
 #+end_src
 
+* Vterm Configuration
+
+The problem: Evil intercepts ESC globally before vterm can handle it.
+The solution: Disable Evil's ESC keybinding in vterm buffers.
+
+#+begin_src emacs-lisp
+(after! vterm
+  (add-hook 'vterm-mode-hook
+    (lambda ()
+      ;; Remove ESC from evil-normal-state-map so it doesn't intercept in vterm
+      (evil-define-key 'insert vterm-mode-map
+        (kbd "<escape>") 'vterm-send-escape))))
+#+end_src
+
 <!-- Local Variables: -->
 <!-- gptel-model: gpt-5-mini -->
 <!-- gptel--backend-name: "Copilot" -->
