@@ -529,6 +529,14 @@ Show your Emacs activity on Discord using emacs-rpc.
   (setq presence-use-major-mode-as-main-icon nil)
   ;; Show the small icon (mode icon)
   (setq presence-show-small-icon t)
+  ;; Add extra mode icon mappings
+  (setq presence-mode-icon-alist
+        (append '((magit-status-mode . "git")
+                  (magit-log-mode . "git")
+                  (magit-diff-mode . "git")
+                  (magit-revision-mode . "git")
+                  (conf-toml-mode . "toml"))
+                presence-mode-icon-alist))
   ;; Hide line numbers from status
   (setq presence-display-line-numbers nil)
   ;; Custom format: show project name + file instead of just buffer name
