@@ -666,22 +666,9 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
 * Dashboard Customization
 
 #+begin_src emacs-lisp
-;; Use custom octopus ASCII art as the dashboard banner with minimal menu.
-#+end_src
+;; Use custom emacs logo image as the dashboard banner with minimal menu.
 
-#+begin_src emacs-lisp
-(defun my/doom-dashboard-octopus ()
-  "Insert octopus ASCII art for dashboard."
-  (let ((octopus-file (expand-file-name "~/.config/doom/banners/octopus.txt")))
-    (when (file-readable-p octopus-file)
-      (insert
-       (with-temp-buffer
-         (insert-file-contents octopus-file)
-         (buffer-string))))))
-
-(setq +doom-dashboard-ascii-banner-fn #'my/doom-dashboard-octopus)
-
-;; Minimal menu - just open project and open docs
+;; Set BEFORE doom-dashboard loads
 (setq +doom-dashboard-menu-sections
       '(("Open project"
          :icon (nerd-icons-octicon "nf-oct-briefcase" :face 'doom-dashboard-menu-title)
@@ -690,64 +677,95 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
          :icon (nerd-icons-octicon "nf-oct-book" :face 'doom-dashboard-menu-title)
          :action doom/help)))
 
-;; Custom shortmenu with tighter spacing - use single newline instead of double
-(defun my/doom-dashboard-widget-shortmenu ()
-  (insert "\n")
-  (dolist (section +doom-dashboard-menu-sections)
-    (cl-destructuring-bind (label &key icon action when face key) section
-      (when (and (fboundp action)
-                 (or (null when)
-                     (eval when t)))
-        (insert
-         (+doom-dashboard--center
-          (- +doom-dashboard--width 1)
-          (let ((icon (if (stringp icon) icon (eval icon t))))
-            (format (format "%s%%s%%-10s" (if icon "%3s\t" "%3s"))
-                    (or icon "")
-                    (with-temp-buffer
-                      (insert-text-button
-                       label
-                       'action
-                       `(lambda (_)
-                          (call-interactively (or (command-remapping #',action)
-                                                  #',action)))
-                       'face (or face 'doom-dashboard-menu-title)
-                       'follow-link t
-                       'help-echo
-                       (format "%s (%s)" label
-                               (propertize (symbol-name action) 'face 'doom-dashboard-menu-desc)))
-                      (format "%-37s" (buffer-string)))
-                    ;; Lookup command keys dynamically
-                    (propertize
-                     (or key
-                         (when-let*
-                             ((keymaps
-                               (delq
-                                nil (list (when (bound-and-true-p evil-local-mode)
-                                            (evil-get-auxiliary-keymap +doom-dashboard-mode-map 'normal))
-                                          +doom-dashboard-mode-map)))
-                              (key
-                               (or (when keymaps
-                                     (where-is-internal action keymaps t))
-                                   (where-is-internal action nil t))))
-                           (with-temp-buffer
-                             (save-excursion (insert (key-description key)))
-                             (while (re-search-forward "<\\([^>]+\\)>" nil t)
-                               (let ((str (match-string 1)))
-                                 (replace-match
-                                  (upcase (if (< (length str) 3)
-                                              str
-                                            (substring str 0 3))))))
-                             (buffer-string)))
-                         "")
-                     'face 'doom-dashboard-menu-desc))))
-         "\n")))))  ;; Use single \n instead of \n\n
+(after! doom-dashboard
+  ;; Set the banner file and directory
+  (setq +doom-dashboard-banner-file "default.png"
+        +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 
-;; Override dashboard widgets - remove loaded time, keep banner and menu
-(setq +doom-dashboard-functions
-      '(doom-dashboard-widget-banner
-        my/doom-dashboard-widget-shortmenu
-        doom-dashboard-widget-footer))
+  ;; Adjust banner padding for better vertical centering
+  (setq +doom-dashboard-banner-padding '(8 . 4))
+
+  ;; Override the banner widget to properly center the image
+  (defun doom-dashboard-widget-banner ()
+    (let ((point (point)))
+      (if (and (display-graphic-p)
+               (stringp fancy-splash-image)
+               (file-readable-p fancy-splash-image))
+          (let* ((image (create-image (fancy-splash-image-file)))
+                 (img-width (car (image-size image t)))
+                 ;; Add 2 extra spaces to shift right slightly
+                 (line (make-string (max 1 (+ img-width 2)) ? )))
+            ;; Insert a centered spacer line and display the image on it
+            (insert (+doom-dashboard--center +doom-dashboard--width line) "\n")
+            (add-text-properties
+             point (1- (point)) `(display ,image rear-nonsticky (display)))
+            (insert (make-string (or (cdr +doom-dashboard-banner-padding) 0)
+                                 ?\n)))
+        ;; Fallback to ASCII banner in terminal mode (optional)
+        nil)))
+
+  ;; Custom shortmenu with tighter spacing - use single newline instead of double
+  (defun my/doom-dashboard-widget-shortmenu ()
+    (insert "\n")
+    (dolist (section +doom-dashboard-menu-sections)
+      (cl-destructuring-bind (label &key icon action when face key) section
+        (when (and (fboundp action)
+                   (or (null when)
+                       (eval when t)))
+          (insert
+           (+doom-dashboard--center
+            (- +doom-dashboard--width 1)
+            (let ((icon (if (stringp icon) icon (eval icon t))))
+              (format (format "%s%%s%%-10s" (if icon "%3s\t" "%3s"))
+                      (or icon "")
+                      (with-temp-buffer
+                        (insert-text-button
+                         label
+                         'action
+                         `(lambda (_)
+                            (call-interactively (or (command-remapping #',action)
+                                                    #',action)))
+                         'face (or face 'doom-dashboard-menu-title)
+                         'follow-link t
+                         'help-echo
+                         (format "%s (%s)" label
+                                 (propertize (symbol-name action) 'face 'doom-dashboard-menu-desc)))
+                        (format "%-37s" (buffer-string)))
+                      ;; Lookup command keys dynamically
+                      (propertize
+                       (or key
+                           (when-let*
+                               ((keymaps
+                                 (delq
+                                  nil (list (when (bound-and-true-p evil-local-mode)
+                                              (evil-get-auxiliary-keymap +doom-dashboard-mode-map 'normal))
+                                            +doom-dashboard-mode-map)))
+                                (key
+                                 (or (when keymaps
+                                       (where-is-internal action keymaps t))
+                                     (where-is-internal action nil t))))
+                             (with-temp-buffer
+                               (save-excursion (insert (key-description key)))
+                               (while (re-search-forward "<\\([^>]+\\)>" nil t)
+                                 (let ((str (match-string 1)))
+                                   (replace-match
+                                    (upcase (if (< (length str) 3)
+                                                str
+                                              (substring str 0 3))))))
+                               (buffer-string)))
+                           "")
+                       'face 'doom-dashboard-menu-desc))))
+           "\n")))))  ;; Use single \n instead of \n\n
+
+  ;; Override dashboard widgets - remove loaded time, keep banner and menu
+  (setq +doom-dashboard-functions
+        '(doom-dashboard-widget-banner
+          my/doom-dashboard-widget-shortmenu
+          doom-dashboard-widget-footer))
+
+  ;; Force reload dashboard to apply changes
+  (when (get-buffer +doom-dashboard-name)
+    (+doom-dashboard-reload t)))
 #+end_src
 
 * Vterm Configuration
@@ -759,9 +777,12 @@ The solution: Disable Evil's ESC keybinding in vterm buffers.
 (after! vterm
   (add-hook 'vterm-mode-hook
     (lambda ()
-      ;; Remove ESC from evil-normal-state-map so it doesn't intercept in vterm
+      ;; ESC sends to terminal, not evil
       (evil-define-key 'insert vterm-mode-map
-        (kbd "<escape>") 'vterm-send-escape))))
+        (kbd "<escape>") 'vterm-send-escape)
+      ;; Ctrl-c Ctrl-c enters normal mode
+      (evil-define-key 'insert vterm-mode-map
+        (kbd "C-c C-c") 'evil-normal-state))))
 #+end_src
 
 <!-- Local Variables: -->
