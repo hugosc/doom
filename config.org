@@ -663,12 +663,17 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
           (setq-local org-modern-hide-stars 'leading))))))
 #+end_src
 
+
+
 * Dashboard Customization
 
 #+begin_src emacs-lisp
 ;; Use custom emacs logo image as the dashboard banner with minimal menu.
 
 ;; Set BEFORE doom-dashboard loads
+(setq +doom-dashboard-banner-file "default.xpm"
+      +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
+
 (setq +doom-dashboard-menu-sections
       '(("Open project"
          :icon (nerd-icons-octicon "nf-oct-briefcase" :face 'doom-dashboard-menu-title)
@@ -678,9 +683,6 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
          :action doom/help)))
 
 (after! doom-dashboard
-  ;; Set the banner file and directory
-  (setq +doom-dashboard-banner-file "default.png"
-        +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 
   ;; Adjust banner padding for better vertical centering
   (setq +doom-dashboard-banner-padding '(8 . 4))
