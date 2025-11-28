@@ -101,7 +101,7 @@
            :if-new (file+head "journal/%<%Y>.org" "#+TITLE: Journal %<%Y>\n#+FILETAGS: :journal:\n")
            :empty-lines-before 1
            :unnarrowed t)))
-  (defun my/org-roam-promote-heading-to-concept ()
+(defun my/org-roam-promote-heading-to-concept ()
     "Promote current heading into a new concept node.
 
 This:
@@ -209,64 +209,64 @@ It does NOT delete or replace the original heading."
               (insert (format "* Relations\n- [[id:%s][%s]]\n" new-id title))
               (save-buffer)))
           (message "Promoted '%s' → %s (id:%s) and inserted link in original file" title file new-id)))))
-  (defun my/insert-file-link (path)
-    "Insert an org file link to PATH with basename as description."
-    (interactive "fFile: ")
-    (insert (format "[[file:%s][%s]]" (abbreviate-file-name path) (file-name-base path))))
-  (defun my/add-heading-id ()
-    "Add org-id UUID to heading with filename-heading alias for org-roam."
-    (interactive)
-    (org-back-to-heading t)
-    (let* ((filename (file-name-base (buffer-file-name)))
-           (title (nth 4 (org-heading-components)))
-           (alias (format "%s - %s" filename title))
-           (id (org-id-get-create)))
-      (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias))
-      (message "Added ID with alias: %s" alias)))
-  (defun my/insert-heading-link ()
-    "Pick an org file recursively, then link to a heading with org-id."
-    (interactive)
-    (let* ((current-buf (current-buffer))
-           (brain2-dir (expand-file-name "~/Documents/brain2/"))
-           (default-directory brain2-dir)
-           ;; Get all org files recursively
-           (org-files (directory-files-recursively brain2-dir "\\.org$"))
-           ;; Make paths relative for cleaner display
-           (file-choices (mapcar (lambda (f) (file-relative-name f brain2-dir)) org-files))
-           (file-rel (completing-read "Org file: " file-choices nil t))
-           (file (expand-file-name file-rel brain2-dir))
-           (filename (file-name-base file)))
-      (unless (file-exists-p file)
-        (user-error "File not found: %s" file))
-      ;; List headings in that file
-      (with-current-buffer (find-file-noselect file)
-        (let* ((headings (org-map-entries (lambda () (nth 4 (org-heading-components))) nil 'file))
-               (heading (completing-read "Heading: " headings)))
-          ;; Find the heading and get/create its ID
-          (goto-char (point-min))
-          (unless (search-forward heading nil t)
-            (user-error "Heading not found: %s" heading))
-          (org-back-to-heading t)
-          (let* ((id (org-id-get-create))
-                 (alias (format "%s - %s" filename heading))
-                 (link (format "[[id:%s][%s]]" id heading)))
-            ;; Ensure alias is set
-            (unless (org-entry-get nil "ROAM_ALIASES")
-              (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias)))
-            ;; Switch back to original buffer and insert link
-            (with-current-buffer current-buf
-              (insert link)
-              (message "Inserted link: %s" link)))))))
-  (map! :leader
-        :desc "Promote heading to concept" "n P" #'my/org-roam-promote-heading-to-concept
-        :desc "Insert file link" "n f" #'my/insert-file-link
-        :desc "Add heading ID" "n i" #'my/add-heading-id
-        :desc "Insert heading link" "n h" #'my/insert-heading-link
-        :desc "Find/create node" "n n" #'org-roam-node-find
-        :desc "Insert node link" "n l" #'org-roam-node-insert
-        :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
-        :desc "Open graph UI" "n g" #'org-roam-ui-open
-        :desc "Capture new node" "n c" #'org-roam-capture)
+(defun my/insert-file-link (path)
+  "Insert an org file link to PATH with basename as description."
+  (interactive "fFile: ")
+  (insert (format "[[file:%s][%s]]" (abbreviate-file-name path) (file-name-base path))))
+(defun my/add-heading-id ()
+  "Add org-id UUID to heading with filename-heading alias for org-roam."
+  (interactive)
+  (org-back-to-heading t)
+  (let* ((filename (file-name-base (buffer-file-name)))
+         (title (nth 4 (org-heading-components)))
+         (alias (format "%s - %s" filename title))
+         (id (org-id-get-create)))
+    (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias))
+    (message "Added ID with alias: %s" alias)))
+(defun my/insert-heading-link ()
+  "Pick an org file recursively, then link to a heading with org-id."
+  (interactive)
+  (let* ((current-buf (current-buffer))
+         (brain2-dir (expand-file-name "~/Documents/brain2/"))
+         (default-directory brain2-dir)
+         ;; Get all org files recursively
+         (org-files (directory-files-recursively brain2-dir "\\.org$"))
+         ;; Make paths relative for cleaner display
+         (file-choices (mapcar (lambda (f) (file-relative-name f brain2-dir)) org-files))
+         (file-rel (completing-read "Org file: " file-choices nil t))
+         (file (expand-file-name file-rel brain2-dir))
+         (filename (file-name-base file)))
+    (unless (file-exists-p file)
+      (user-error "File not found: %s" file))
+    ;; List headings in that file
+    (with-current-buffer (find-file-noselect file)
+      (let* ((headings (org-map-entries (lambda () (nth 4 (org-heading-components))) nil 'file))
+             (heading (completing-read "Heading: " headings)))
+        ;; Find the heading and get/create its ID
+        (goto-char (point-min))
+        (unless (search-forward heading nil t)
+          (user-error "Heading not found: %s" heading))
+        (org-back-to-heading t)
+        (let* ((id (org-id-get-create))
+               (alias (format "%s - %s" filename heading))
+               (link (format "[[id:%s][%s]]" id heading)))
+          ;; Ensure alias is set
+          (unless (org-entry-get nil "ROAM_ALIASES")
+            (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias)))
+          ;; Switch back to original buffer and insert link
+          (with-current-buffer current-buf
+            (insert link)
+            (message "Inserted link: %s" link)))))))
+(map! :leader
+      :desc "Promote heading to concept" "n P" #'my/org-roam-promote-heading-to-concept
+      :desc "Insert file link" "n f" #'my/insert-file-link
+      :desc "Add heading ID" "n i" #'my/add-heading-id
+      :desc "Insert heading link" "n h" #'my/insert-heading-link
+      :desc "Find/create node" "n n" #'org-roam-node-find
+      :desc "Insert node link" "n l" #'org-roam-node-insert
+      :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
+      :desc "Open graph UI" "n g" #'org-roam-ui-open
+      :desc "Capture new node" "n c" #'org-roam-capture)
 )
 (defun my/mark-lecture-processed ()
   "Mark current lecture note as processed and move to processed directory."
@@ -422,7 +422,7 @@ It does NOT delete or replace the original heading."
           (setq-local org-modern-hide-stars 'leading))))))
 ;; Use custom emacs logo image as the dashboard banner with minimal menu.
 
-;; Set BEFORE doom-dashboard loads
+;; Set BEFORE doom-dashboard loads - use pre-scaled high-quality XPM
 (setq +doom-dashboard-banner-file "default.xpm"
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 

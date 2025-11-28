@@ -670,7 +670,7 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
 #+begin_src emacs-lisp
 ;; Use custom emacs logo image as the dashboard banner with minimal menu.
 
-;; Set BEFORE doom-dashboard loads
+;; Set BEFORE doom-dashboard loads - use pre-scaled high-quality XPM
 (setq +doom-dashboard-banner-file "default.xpm"
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 
