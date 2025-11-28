@@ -7,12 +7,15 @@
 - [[#introduction][Introduction]]
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
+  - [[#emacs-server][Emacs Server]]
   - [[#auto-revert-mode][Auto-revert Mode]]
   - [[#user-information][User Information]]
   - [[#line-numbers][Line Numbers]]
+  - [[#performance-tuning][Performance Tuning]]
 - [[#visual-configuration][Visual Configuration]]
   - [[#fonts][Fonts]]
   - [[#theme-pywal-integration][Theme: Pywal Integration]]
+  - [[#transparency-toggle-and-pywal-auto-reload][Transparency Toggle and Pywal Auto-Reload]]
 - [[#org-roam-configuration][Org-Roam Configuration]]
   - [[#org-roam-ui][Org-Roam UI]]
   - [[#capture-templates][Capture Templates]]
@@ -20,9 +23,15 @@
   - [[#keybindings][Keybindings]]
 - [[#lecture-processing][Lecture Processing]]
 - [[#file-navigation][File Navigation]]
+  - [[#performance-fast-search-tools][Performance: Fast Search Tools]]
+  - [[#yazi-integration-eeeel][Yazi Integration (eee.el)]]
 - [[#ai-integration-gptel][AI Integration: GPTel]]
+- [[#discord-presence][Discord Presence]]
 - [[#org-agenda][Org Agenda]]
 - [[#org-formatting][Org Formatting]]
+- [[#zen-mode-customization][Zen Mode Customization]]
+- [[#dashboard-customization][Dashboard Customization]]
+- [[#vterm-configuration][Vterm Configuration]]
 
 * Introduction
 
@@ -70,7 +79,8 @@ This is especially useful when working with external tools like OpenCode.
 
 #+begin_src emacs-lisp
 (global-auto-revert-mode 1)
-(setq auto-revert-verbose t)
+(setq auto-revert-interval 20)   ; Check every 20 seconds (less aggressive)
+(setq auto-revert-verbose nil)   ; Don't spam messages
 #+end_src
 
 ** User Information
@@ -88,6 +98,22 @@ Display line numbers in programming and text modes.
 
 #+begin_src emacs-lisp
 (setq display-line-numbers-type t)
+#+end_src
+
+** Performance Tuning
+
+Optimize Emacs for better responsiveness and lower resource usage.
+
+#+begin_src emacs-lisp
+;; Increase garbage collection threshold for less frequent GC pauses
+(setq gc-cons-threshold 100000000)  ; 100 MB (default is 800KB)
+
+;; Increase amount of data Emacs reads from processes (better for LSP)
+(setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
+
+;; Less aggressive auto-revert checks
+(setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
+(setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
 #+end_src
 
 * Visual Configuration
@@ -139,23 +165,45 @@ Helper function to reload the pywal theme after changing wallpaper:
 
 ** Transparency Toggle and Pywal Auto-Reload
 
-Toggle emacs transparency to match kitty when Super+Shift+P is pressed.
-This makes emacs background respond dynamically to kitty opacity changes.
-
-Also set up file watcher to auto-reload theme when pywal colors change.
+Unified transparency system that syncs across kitty, st, and emacs.
+Uses Super+Shift+P (via DWM) to toggle all windows simultaneously.
+State is persisted in /tmp/transparency-state for new windows.
 
 #+begin_src emacs-lisp
-;; Toggle emacs frame alpha (transparency) to match kitty
-(defun toggle-emacs-transparency ()
-  "Toggle emacs frame transparency between opaque (100%) and semi-transparent (85%)."
-  (interactive)
-  (let* ((alpha-param (frame-parameter nil 'alpha-background))
-         (current-alpha (or alpha-param 100))
-         (new-alpha (if (>= current-alpha 95) 85 100)))
-    (set-frame-parameter nil 'alpha-background new-alpha)
-    (message "Emacs transparency: %d%%" new-alpha)))
+;; Read transparency state from file
+(defun get-transparency-state ()
+  "Read current transparency state from /tmp/transparency-state."
+  (if (file-exists-p "/tmp/transparency-state")
+      (with-temp-buffer
+        (insert-file-contents "/tmp/transparency-state")
+        (string-trim (buffer-string)))
+    "transparent"))
 
-;; Watch for changes to pywal colors and reload theme automatically
+;; Set initial transparency based on saved state
+(let ((state (get-transparency-state)))
+  (set-frame-parameter nil 'alpha-background 
+                       (if (string= state "opaque") 100 85)))
+
+;; Toggle function that syncs with system
+(defun toggle-emacs-transparency ()
+  "Toggle emacs frame transparency and sync with system state."
+  (interactive)
+  ;; Just call the system-wide toggle script which handles everything
+  (start-process-shell-command 
+   "toggle-transparency" nil "toggle-transparency"))
+
+;; Watch for transparency state changes from external toggles
+(when (functionp 'file-notify-add-watch)
+  (let ((state-file "/tmp/transparency-state"))
+    (file-notify-add-watch state-file '(change)
+      (lambda (event)
+        (when (eq (nth 1 event) 'changed)
+          (let ((state (get-transparency-state)))
+            (dolist (frame (frame-list))
+              (set-frame-parameter frame 'alpha-background 
+                                   (if (string= state "opaque") 100 85)))))))))
+
+;; Watch for pywal color changes
 (defun my/watch-pywal-colors ()
   "Set up file watcher for pywal colors.json to auto-reload theme."
   (when (functionp 'file-notify-add-watch)
@@ -168,10 +216,8 @@ Also set up file watcher to auto-reload theme when pywal colors change.
 
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
-
-;; Set initial transparency to match kitty (85%)
-(set-frame-parameter nil 'alpha-background 85)
 #+end_src
+
 
 * Org-Roam Configuration
 
@@ -488,6 +534,55 @@ Use =consult-fd= for live, telescope-like file finding without caching.
 (map! :leader :desc "Find file (live)" "SPC" #'consult-fd)
 #+end_src
 
+** Performance: Fast Search Tools
+
+Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations.
+
+#+begin_src emacs-lisp
+;; Use fd instead of find for projectile
+(after! projectile
+  (when (executable-find "fd")
+    (setq projectile-git-command "fd . -0 --type f --color=never"
+          projectile-generic-command "fd . -0 --type f --color=never"
+          projectile-indexing-method 'alien
+          projectile-enable-caching nil)))  ; No cache needed with fd
+
+;; Use ripgrep for project search
+(after! counsel
+  (when (executable-find "rg")
+    (setq counsel-rg-base-command "rg --no-heading --line-number --color never %s .")))
+
+;; Configure consult to use ripgrep and fd
+(after! consult
+  (when (executable-find "rg")
+    (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number --search-zip"))
+  (when (executable-find "fd")
+    (setq consult-fd-args "fd --color=never --full-path --hidden --exclude .git")))
+
+;; Use ripgrep for Doom's default search
+(after! vertico
+  (when (executable-find "rg")
+    (setq +default-want-RET-continue-p nil)))
+#+end_src
+
+** Yazi Integration (eee.el)
+
+Launch yazi file manager in external terminal with Emacs integration.
+
+#+begin_src emacs-lisp
+(use-package! eee
+  :config
+  ;; Use wrapper script that applies transparency state to new st windows
+  (setq ee-terminal-command "/home/croc/.config/scripts/st-with-transparency")
+  
+  ;; Keybindings for yazi and other TUI tools
+  (map! :leader
+        :desc "Yazi (current dir)" "f y" #'ee-yazi
+        :desc "Yazi (project)" "f Y" #'ee-yazi-project
+        :desc "Ripgrep search" "s g" #'ee-rg
+        :desc "Lazygit" "g z" #'ee-lazygit))
+#+end_src
+
 * AI Integration: GPTel
 
 GPTel provides AI assistance directly in Emacs. 
@@ -507,13 +602,15 @@ To use GPTel:
 * Discord Presence
 
 Show your Emacs activity on Discord using emacs-rpc.
+Lazy-loaded to avoid startup overhead.
 
 #+begin_src emacs-lisp
 (use-package! presence
-  :defer t
+  :defer 5  ; Load 5 seconds after startup (lazy-load for performance)
   :commands (presence-mode)
   :init
-  (add-hook 'doom-first-buffer-hook #'presence-mode)
+  ;; Don't auto-enable, let it load lazily
+  (run-with-idle-timer 5 nil #'presence-mode)
   :config
   ;; Use custom Discord application
   (setq presence-client-id "1443438985878962228")
@@ -675,11 +772,9 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 
 (setq +doom-dashboard-menu-sections
-      '(("Open project"
-         :icon (nerd-icons-octicon "nf-oct-briefcase" :face 'doom-dashboard-menu-title)
+      '((" Open project"
          :action projectile-switch-project)
-        ("Open documentation"
-         :icon (nerd-icons-octicon "nf-oct-book" :face 'doom-dashboard-menu-title)
+        (" Open documentation"
          :action doom/help)))
 
 (after! doom-dashboard

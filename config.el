@@ -11,10 +11,20 @@
       (when (not (server-running-p))
         (server-start)))))
 (global-auto-revert-mode 1)
-(setq auto-revert-verbose t)
+(setq auto-revert-interval 20)   ; Check every 20 seconds (less aggressive)
+(setq auto-revert-verbose nil)   ; Don't spam messages
 ;; (setq user-full-name "John Doe"
 ;;       user-mail-address "john@doe.com")
 (setq display-line-numbers-type t)
+;; Increase garbage collection threshold for less frequent GC pauses
+(setq gc-cons-threshold 100000000)  ; 100 MB (default is 800KB)
+
+;; Increase amount of data Emacs reads from processes (better for LSP)
+(setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
+
+;; Less aggressive auto-revert checks
+(setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
+(setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
 ;; (setq doom-font (font-spec :family "Fira Code" :size 12 :weight 'semi-light)
 ;;       doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
 (use-package! ewal
@@ -33,17 +43,40 @@
   (ewal-load-colors)
   (load-theme 'ewal-doom-one t)
   (message "Pywal theme reloaded!"))
-;; Toggle emacs frame alpha (transparency) to match kitty
-(defun toggle-emacs-transparency ()
-  "Toggle emacs frame transparency between opaque (100%) and semi-transparent (85%)."
-  (interactive)
-  (let* ((alpha-param (frame-parameter nil 'alpha-background))
-         (current-alpha (or alpha-param 100))
-         (new-alpha (if (>= current-alpha 95) 85 100)))
-    (set-frame-parameter nil 'alpha-background new-alpha)
-    (message "Emacs transparency: %d%%" new-alpha)))
+;; Read transparency state from file
+(defun get-transparency-state ()
+  "Read current transparency state from /tmp/transparency-state."
+  (if (file-exists-p "/tmp/transparency-state")
+      (with-temp-buffer
+        (insert-file-contents "/tmp/transparency-state")
+        (string-trim (buffer-string)))
+    "transparent"))
 
-;; Watch for changes to pywal colors and reload theme automatically
+;; Set initial transparency based on saved state
+(let ((state (get-transparency-state)))
+  (set-frame-parameter nil 'alpha-background 
+                       (if (string= state "opaque") 100 85)))
+
+;; Toggle function that syncs with system
+(defun toggle-emacs-transparency ()
+  "Toggle emacs frame transparency and sync with system state."
+  (interactive)
+  ;; Just call the system-wide toggle script which handles everything
+  (start-process-shell-command 
+   "toggle-transparency" nil "toggle-transparency"))
+
+;; Watch for transparency state changes from external toggles
+(when (functionp 'file-notify-add-watch)
+  (let ((state-file "/tmp/transparency-state"))
+    (file-notify-add-watch state-file '(change)
+      (lambda (event)
+        (when (eq (nth 1 event) 'changed)
+          (let ((state (get-transparency-state)))
+            (dolist (frame (frame-list))
+              (set-frame-parameter frame 'alpha-background 
+                                   (if (string= state "opaque") 100 85)))))))))
+
+;; Watch for pywal color changes
 (defun my/watch-pywal-colors ()
   "Set up file watcher for pywal colors.json to auto-reload theme."
   (when (functionp 'file-notify-add-watch)
@@ -56,9 +89,6 @@
 
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
-
-;; Set initial transparency to match kitty (85%)
-(set-frame-parameter nil 'alpha-background 85)
 (use-package! org-roam-ui
   :after org-roam
   :hook (org-roam-mode . org-roam-ui-mode)
@@ -288,15 +318,51 @@ It does NOT delete or replace the original heading."
 
 (map! :leader :desc "Process lecture" "n L" #'my/mark-lecture-processed)
 (map! :leader :desc "Find file (live)" "SPC" #'consult-fd)
+;; Use fd instead of find for projectile
+(after! projectile
+  (when (executable-find "fd")
+    (setq projectile-git-command "fd . -0 --type f --color=never"
+          projectile-generic-command "fd . -0 --type f --color=never"
+          projectile-indexing-method 'alien
+          projectile-enable-caching nil)))  ; No cache needed with fd
+
+;; Use ripgrep for project search
+(after! counsel
+  (when (executable-find "rg")
+    (setq counsel-rg-base-command "rg --no-heading --line-number --color never %s .")))
+
+;; Configure consult to use ripgrep and fd
+(after! consult
+  (when (executable-find "rg")
+    (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number --search-zip"))
+  (when (executable-find "fd")
+    (setq consult-fd-args "fd --color=never --full-path --hidden --exclude .git")))
+
+;; Use ripgrep for Doom's default search
+(after! vertico
+  (when (executable-find "rg")
+    (setq +default-want-RET-continue-p nil)))
+(use-package! eee
+  :config
+  ;; Use wrapper script that applies transparency state to new st windows
+  (setq ee-terminal-command "/home/croc/.config/scripts/st-with-transparency")
+  
+  ;; Keybindings for yazi and other TUI tools
+  (map! :leader
+        :desc "Yazi (current dir)" "f y" #'ee-yazi
+        :desc "Yazi (project)" "f Y" #'ee-yazi-project
+        :desc "Ripgrep search" "s g" #'ee-rg
+        :desc "Lazygit" "g z" #'ee-lazygit))
 (use-package! gptel
   :config
   (setq gptel-model 'gpt-5-mini
         gptel-backend (gptel-make-gh-copilot "Copilot")))
 (use-package! presence
-  :defer t
+  :defer 5  ; Load 5 seconds after startup (lazy-load for performance)
   :commands (presence-mode)
   :init
-  (add-hook 'doom-first-buffer-hook #'presence-mode)
+  ;; Don't auto-enable, let it load lazily
+  (run-with-idle-timer 5 nil #'presence-mode)
   :config
   ;; Use custom Discord application
   (setq presence-client-id "1443438985878962228")
@@ -427,11 +493,9 @@ It does NOT delete or replace the original heading."
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 
 (setq +doom-dashboard-menu-sections
-      '(("Open project"
-         :icon (nerd-icons-octicon "nf-oct-briefcase" :face 'doom-dashboard-menu-title)
+      '((" Open project"
          :action projectile-switch-project)
-        ("Open documentation"
-         :icon (nerd-icons-octicon "nf-oct-book" :face 'doom-dashboard-menu-title)
+        (" Open documentation"
          :action doom/help)))
 
 (after! doom-dashboard

@@ -63,3 +63,8 @@
 ;; Discord RPC/Presence
 (package! presence
   :recipe (:host github :repo "richardhbtz/emacs-rpc"))
+
+;; eee.el - Launch TUI apps like yazi asynchronously
+(package! eee
+  :recipe (:host github :repo "eval-exec/eee.el"
+           :files (:defaults "*.el" "*.sh")))
