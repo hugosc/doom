@@ -1,6 +1,7 @@
 ## My personal config of DOOM Emacs
 
 ![My Config](doom.png)
+![My Config](doom2.png)
 
 ### Navigation & Focus
 
