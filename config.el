@@ -493,9 +493,11 @@ It does NOT delete or replace the original heading."
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
 
 (setq +doom-dashboard-menu-sections
-      '((" Open project"
+      '(("Open project"
+         :icon (nerd-icons-sucicon "nf-custom-folder_git" :face 'doom-dashboard-menu-title :height 1.3)
          :action projectile-switch-project)
-        (" Open documentation"
+        ("Open documentation"
+         :icon (nerd-icons-faicon "nf-fa-book_skull" :face 'doom-dashboard-menu-title :height 1.3)
          :action doom/help)))
 
 (after! doom-dashboard
