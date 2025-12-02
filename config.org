@@ -275,15 +275,15 @@ My capture templates support different types of content in my knowledge system:
            "* Overview\n%?\n* Goals\n* Links\n* Decisions\n* TODO\n* Resources"
            :if-new (file+head "projects/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :project:active:\n")
            :unnarrowed t)
-          ("i" "Inbox idea" plain
-           "Context:\n%?\nNext Action:"
-           :if-new (file+head "inbox.org" "#+TITLE: Inbox\n#+FILETAGS: :inbox:\n")
-           :empty-lines-before 1
+          ("i" "Weekly todo" item
+           "TODO %?"
+           :if-new (file+head "inbox.org" "#+TITLE: Inbox\n#+FILETAGS: :inbox:\n\n* This Week\n\n* Recap\n")
+           :prepend t
+           :immediate-finish nil
            :unnarrowed t)
-          ("j" "Journal entry" plain
+          ("j" "Daily" plain
            "%?"
-           :if-new (file+head "journal/%<%Y>.org" "#+TITLE: Journal %<%Y>\n#+FILETAGS: :journal:\n")
-           :empty-lines-before 1
+           :if-new (file+head "journal/%<%Y-%m-%d>.org" "#+TITLE: %<%B %d, %Y>\n#+FILETAGS: :daily:\n")
            :unnarrowed t)))
 #+end_src
 
