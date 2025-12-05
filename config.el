@@ -3,7 +3,6 @@
 (require 'server)
 (unless (server-running-p)
   (server-start))
-
 ;; Also ensure server starts if running in daemon mode
 (when (daemonp)
   (add-hook 'after-make-frame-functions
@@ -18,10 +17,8 @@
 (setq display-line-numbers-type t)
 ;; Increase garbage collection threshold for less frequent GC pauses
 (setq gc-cons-threshold 100000000)  ; 100 MB (default is 800KB)
-
 ;; Increase amount of data Emacs reads from processes (better for LSP)
 (setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
-
 ;; Less aggressive auto-revert checks
 (setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
 (setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
@@ -31,7 +28,6 @@
   :init (setq ewal-use-built-in-always-p nil
               ewal-use-built-in-on-failure-p t
               ewal-built-in-palette "doom-one"))
-
 (use-package! ewal-doom-themes
   :after ewal
   :config (progn
@@ -51,12 +47,10 @@
         (insert-file-contents "/tmp/transparency-state")
         (string-trim (buffer-string)))
     "transparent"))
-
 ;; Set initial transparency based on saved state
 (let ((state (get-transparency-state)))
   (set-frame-parameter nil 'alpha-background 
                        (if (string= state "opaque") 100 85)))
-
 ;; Toggle function that syncs with system
 (defun toggle-emacs-transparency ()
   "Toggle emacs frame transparency and sync with system state."
@@ -64,7 +58,6 @@
   ;; Just call the system-wide toggle script which handles everything
   (start-process-shell-command 
    "toggle-transparency" nil "toggle-transparency"))
-
 ;; Watch for transparency state changes from external toggles
 (when (functionp 'file-notify-add-watch)
   (let ((state-file "/tmp/transparency-state"))
@@ -75,7 +68,6 @@
             (dolist (frame (frame-list))
               (set-frame-parameter frame 'alpha-background 
                                    (if (string= state "opaque") 100 85)))))))))
-
 ;; Watch for pywal color changes
 (defun my/watch-pywal-colors ()
   "Set up file watcher for pywal colors.json to auto-reload theme."
@@ -86,7 +78,6 @@
           (lambda (event)
             (when (eq (nth 1 event) 'changed)
               (reload-pywal-theme))))))))
-
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
 (use-package! org-roam-ui
@@ -133,7 +124,6 @@
            :unnarrowed t)))
 (defun my/org-roam-promote-heading-to-concept ()
     "Promote current heading into a new concept node.
-
 This:
 - Creates `concepts/<slug>.org` (if missing) with a scaffold that uses '* Overview'.
 - Copies the current heading's subtree (content below the heading line) into
@@ -142,12 +132,10 @@ This:
   links to that heading automatically resolve to the new concept file.
 - Removes the ID from the original heading to avoid duplicates.
 - Inserts a link to the new concept in the original file's '* Relations' section as a bullet point.
-
 It does NOT delete or replace the original heading." 
     (interactive)
     (unless (org-at-heading-p)
       (user-error "Not at a heading"))
-
     (let* ((title (nth 4 (org-heading-components)))
            (node (org-roam-node-create :title title))
            (slug (org-roam-node-slug node))
@@ -223,7 +211,6 @@ It does NOT delete or replace the original heading."
                   ;; Insert the trimmed body content
                   (insert (string-trim body) "\n")
                   (save-buffer)))))
-
           ;; Insert a link to the NEW concept into the original file's *Relations section
           (save-excursion
             (goto-char (point-min))
@@ -315,7 +302,6 @@ It does NOT delete or replace the original heading."
       (rename-file file dest 1)
       (find-file dest)
       (message "Lecture processed & moved."))))
-
 (map! :leader :desc "Process lecture" "n L" #'my/mark-lecture-processed)
 (map! :leader :desc "Find file (live)" "SPC" #'consult-fd)
 ;; Use fd instead of find for projectile
@@ -325,19 +311,16 @@ It does NOT delete or replace the original heading."
           projectile-generic-command "fd . -0 --type f --color=never"
           projectile-indexing-method 'alien
           projectile-enable-caching nil)))  ; No cache needed with fd
-
 ;; Use ripgrep for project search
 (after! counsel
   (when (executable-find "rg")
     (setq counsel-rg-base-command "rg --no-heading --line-number --color never %s .")))
-
 ;; Configure consult to use ripgrep and fd
 (after! consult
   (when (executable-find "rg")
     (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number --search-zip"))
   (when (executable-find "fd")
     (setq consult-fd-args "fd --color=never --full-path --hidden --exclude .git")))
-
 ;; Use ripgrep for Doom's default search
 (after! vertico
   (when (executable-find "rg")
@@ -403,75 +386,80 @@ It does NOT delete or replace the original heading."
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
 (after! org
   (defun my/org-format-buffer ()
-    "Format org buffer with consistent spacing."
+    "Format org buffer with consistent, clean spacing matching example.org style."
     (interactive)
-    (message "Running org-format-buffer...")
     (save-excursion
+      ;; First, remove ALL blank lines in entire buffer
       (goto-char (point-min))
-      (while (re-search-forward "^\\*+ " nil t)
-        (let ((heading-pos (line-beginning-position)))
-          ;; Check if next line is properties drawer
-          (forward-line 1)
-          (when (looking-at "^[ \t]*:PROPERTIES:")
-            ;; Remove any blank lines between heading and properties
-            (goto-char heading-pos)
-            (forward-line 1)
-            (while (and (not (looking-at "^[ \t]*:PROPERTIES:"))
-                       (looking-at-p "^\\s-*$"))
-              (delete-region (line-beginning-position) (1+ (line-end-position))))
-            ;; Find end of properties
-            (when (re-search-forward "^[ \t]*:END:" nil t)
-              (forward-line 1)
-              ;; Ensure exactly one blank line after properties
-              (let ((content-start (point)))
-                (while (looking-at-p "^\\s-*$")
-                  (forward-line 1))
-                (unless (= (point) (1+ content-start))
-                  (delete-region content-start (point))
-                  (goto-char content-start)
-                  (unless (or (looking-at "^\\*") (eobp))
-                    (insert "\n"))))))
-          ;; If no properties, ensure blank line after heading
-          (goto-char heading-pos)
-          (forward-line 1)
-          (unless (or (looking-at "^[ \t]*:PROPERTIES:")
-                     (looking-at-p "^\\s-*$")
-                     (looking-at "^\\*")
-                     (eobp))
-            (insert "\n")))))
-    
-    ;; Ensure blank line before each heading (after content)
-    (save-excursion
+      (while (re-search-forward "\n\n+" nil t)
+        (replace-match "\n"))
+      
+      ;; Add blank line after title/filetags section
       (goto-char (point-min))
-      ;; Skip first heading
-      (when (re-search-forward "^\\*+ " nil t)
-        (beginning-of-line)
-        (while (re-search-forward "^\\*+ " nil t)
-          (beginning-of-line)
-          (let ((heading-pos (point)))
-            (forward-line -1)
-            ;; If previous line is not blank and not a heading, add blank line
-            (when (and (not (looking-at-p "^\\s-*$"))
-                       (not (looking-at "^\\*")))
-              (end-of-line)
-              (insert "\n"))
-            ;; Move past this heading to continue loop
-            (goto-char heading-pos)
-            (forward-line 1))))))
-  
-   ;; Run formatting on save
-   (add-hook 'org-mode-hook
-     (lambda ()
-       (add-hook 'before-save-hook #'my/org-format-buffer nil t))))
+      (when (re-search-forward "^#\\+\\(TITLE\\|FILETAGS\\):" nil t)
+        (forward-line 1)
+        (while (looking-at "^#\\+")
+          (forward-line 1))
+        (when (looking-at "^:PROPERTIES:")
+          (re-search-forward "^:END:" nil t)
+          (forward-line 1))
+        (when (looking-at "^\\*")
+          (insert "\n")))
+      
+      ;; Process all headings
+      (goto-char (point-min))
+      (while (re-search-forward "^\\(\\*+\\) " nil t)
+        (forward-line 1)
+        (when (looking-at "^[ \t]*:PROPERTIES:")
+          (re-search-forward "^[ \t]*:END:" nil t)
+          (forward-line 1))
+        (while (looking-at "^[ \t]*\\(SCHEDULED:\\|DEADLINE:\\|CLOSED:\\)")
+          (forward-line 1))
+        (when (looking-at "^[ \t]*:LOGBOOK:")
+          (re-search-forward "^[ \t]*:END:" nil t)
+          (forward-line 1))
+        (let ((content-start (point)))
+          (cond
+           ((eobp)
+            (insert "\n"))
+           ((looking-at "^\\*")
+            (insert "\n"))
+           (t
+            (goto-char content-start)
+            (insert "\n")
+            (if (re-search-forward "^\\*" nil t)
+                (progn
+                  (beginning-of-line)
+                  (insert "\n")
+                  (beginning-of-line))
+              (goto-char (point-max))
+              (unless (bolp)
+                (insert "\n")))))))
+      
+      ;; Clean up trailing blank lines
+      (goto-char (point-max))
+      (while (and (> (point) 1)
+                  (eq (char-before) ?\n)
+                  (eq (char-before (1- (point))) ?\n))
+        (delete-char -1))))
+   
+   ;; Enable auto-format on save
+    (add-hook 'org-mode-hook
+      (lambda ()
+        (add-hook 'before-save-hook #'my/org-format-buffer nil t)))
+   )
+(after! org
+  ;; Display images at max 800px width instead of full resolution
+  ;; This reduces rendering overhead for large screenshots
+  (setq org-image-actual-width 600)
+  (setq org-image-align 'center))
 (setq +zen-text-scale 1)           ;; Font size scale (1 = one size larger)
 (setq writeroom-width 70)          ;; Column width (narrower = wider margins)
-
 ;; Configure org-modern to always be on for org-mode
 (after! org-modern
   (setq org-modern-hide-stars 'leading)
   ;; Enable org-modern globally
   (add-hook 'org-mode-hook #'org-modern-mode))
-
 ;; Zen mode hook - hide line numbers, adjust org-modern star display
 (add-hook 'writeroom-mode-hook
   (lambda ()
@@ -487,11 +475,9 @@ It does NOT delete or replace the original heading."
         (when (derived-mode-p 'org-mode)
           (setq-local org-modern-hide-stars 'leading))))))
 ;; Use custom emacs logo image as the dashboard banner with minimal menu.
-
 ;; Set BEFORE doom-dashboard loads - use pre-scaled high-quality XPM
 (setq +doom-dashboard-banner-file "default.xpm"
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
-
 (setq +doom-dashboard-menu-sections
       '(("Open project"
          :icon (nerd-icons-sucicon "nf-custom-folder_git" :face 'doom-dashboard-menu-title :height 1.3)
@@ -499,12 +485,9 @@ It does NOT delete or replace the original heading."
         ("Open documentation"
          :icon (nerd-icons-faicon "nf-fa-book_skull" :face 'doom-dashboard-menu-title :height 1.3)
          :action doom/help)))
-
 (after! doom-dashboard
-
   ;; Adjust banner padding for better vertical centering
   (setq +doom-dashboard-banner-padding '(8 . 4))
-
   ;; Override the banner widget to properly center the image
   (defun doom-dashboard-widget-banner ()
     (let ((point (point)))
@@ -523,7 +506,6 @@ It does NOT delete or replace the original heading."
                                  ?\n)))
         ;; Fallback to ASCII banner in terminal mode (optional)
         nil)))
-
   ;; Custom shortmenu with tighter spacing - use single newline instead of double
   (defun my/doom-dashboard-widget-shortmenu ()
     (insert "\n")
@@ -576,13 +558,11 @@ It does NOT delete or replace the original heading."
                            "")
                        'face 'doom-dashboard-menu-desc))))
            "\n")))))  ;; Use single \n instead of \n\n
-
   ;; Override dashboard widgets - remove loaded time, keep banner and menu
   (setq +doom-dashboard-functions
         '(doom-dashboard-widget-banner
           my/doom-dashboard-widget-shortmenu
           doom-dashboard-widget-footer))
-
   ;; Force reload dashboard to apply changes
   (when (get-buffer +doom-dashboard-name)
     (+doom-dashboard-reload t)))
@@ -595,3 +575,9 @@ It does NOT delete or replace the original heading."
       ;; Ctrl-c Ctrl-c enters normal mode
       (evil-define-key 'insert vterm-mode-map
         (kbd "C-c C-c") 'evil-normal-state))))
+(setq circe-network-options
+      '(("Libera Chat"
+         :tls t
+         :nick "Crocod1le"
+         :sasl-username "Crocod1le"
+         :sasl-password "Eight0011!!")))

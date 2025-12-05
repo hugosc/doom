@@ -29,9 +29,11 @@
 - [[#discord-presence][Discord Presence]]
 - [[#org-agenda][Org Agenda]]
 - [[#org-formatting][Org Formatting]]
+- [[#org-inline-images][Org Inline Images]]
 - [[#zen-mode-customization][Zen Mode Customization]]
 - [[#dashboard-customization][Dashboard Customization]]
 - [[#vterm-configuration][Vterm Configuration]]
+- [[#circe-irc-configuration][Circe IRC Configuration]]
 
 * Introduction
 
@@ -44,13 +46,10 @@ and GPTel for AI assistance via GitHub Copilot.
 ** Directories
 
 Set the org-roam directory to my brain2 vault. This must be set before org-roam loads.
-
 #+begin_src emacs-lisp
 (setq org-roam-directory "~/Documents/brain2")
 #+end_src
-
 Set the general org-directory for agenda and other org features.
-
 #+begin_src emacs-lisp
 (setq org-directory "~/Documents/brain2/")
 #+end_src
@@ -58,12 +57,10 @@ Set the general org-directory for agenda and other org features.
 ** Emacs Server
 
 Start the emacs server to allow emacsclient connections (required for daemon mode and pywal hooks).
-
 #+begin_src emacs-lisp
 (require 'server)
 (unless (server-running-p)
   (server-start))
-
 ;; Also ensure server starts if running in daemon mode
 (when (daemonp)
   (add-hook 'after-make-frame-functions
@@ -76,7 +73,6 @@ Start the emacs server to allow emacsclient connections (required for daemon mod
 
 Enable global auto-revert mode to automatically reload files when they change externally.
 This is especially useful when working with external tools like OpenCode.
-
 #+begin_src emacs-lisp
 (global-auto-revert-mode 1)
 (setq auto-revert-interval 20)   ; Check every 20 seconds (less aggressive)
@@ -86,7 +82,6 @@ This is especially useful when working with external tools like OpenCode.
 ** User Information
 
 Configure user information for GPG, email clients, and file templates.
-
 #+begin_src emacs-lisp
 ;; (setq user-full-name "John Doe"
 ;;       user-mail-address "john@doe.com")
@@ -95,7 +90,6 @@ Configure user information for GPG, email clients, and file templates.
 ** Line Numbers
 
 Display line numbers in programming and text modes.
-
 #+begin_src emacs-lisp
 (setq display-line-numbers-type t)
 #+end_src
@@ -103,14 +97,11 @@ Display line numbers in programming and text modes.
 ** Performance Tuning
 
 Optimize Emacs for better responsiveness and lower resource usage.
-
 #+begin_src emacs-lisp
 ;; Increase garbage collection threshold for less frequent GC pauses
 (setq gc-cons-threshold 100000000)  ; 100 MB (default is 800KB)
-
 ;; Increase amount of data Emacs reads from processes (better for LSP)
 (setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
-
 ;; Less aggressive auto-revert checks
 (setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
 (setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
@@ -126,9 +117,7 @@ Doom exposes five font variables for customization:
 - =doom-big-font= -- used for =doom-big-font-mode=
 - =doom-symbol-font= -- for symbols
 - =doom-serif-font= -- for the =fixed-pitch-serif= face
-
 Example configuration (commented out):
-
 #+begin_src emacs-lisp
 ;; (setq doom-font (font-spec :family "Fira Code" :size 12 :weight 'semi-light)
 ;;       doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
@@ -138,22 +127,18 @@ Example configuration (commented out):
 
 I use =ewal= to integrate pywal colors with Doom themes, allowing my Emacs theme
 to automatically match my wallpaper color scheme.
-
 #+begin_src emacs-lisp
 (use-package! ewal
   :init (setq ewal-use-built-in-always-p nil
               ewal-use-built-in-on-failure-p t
               ewal-built-in-palette "doom-one"))
-
 (use-package! ewal-doom-themes
   :after ewal
   :config (progn
             (load-theme 'ewal-doom-one t)
             (enable-theme 'ewal-doom-one)))
 #+end_src
-
 Helper function to reload the pywal theme after changing wallpaper:
-
 #+begin_src emacs-lisp
 (defun reload-pywal-theme ()
   "Reload the pywal theme to reflect new colors."
@@ -168,7 +153,6 @@ Helper function to reload the pywal theme after changing wallpaper:
 Unified transparency system that syncs across kitty, st, and emacs.
 Uses Super+Shift+P (via DWM) to toggle all windows simultaneously.
 State is persisted in /tmp/transparency-state for new windows.
-
 #+begin_src emacs-lisp
 ;; Read transparency state from file
 (defun get-transparency-state ()
@@ -178,12 +162,10 @@ State is persisted in /tmp/transparency-state for new windows.
         (insert-file-contents "/tmp/transparency-state")
         (string-trim (buffer-string)))
     "transparent"))
-
 ;; Set initial transparency based on saved state
 (let ((state (get-transparency-state)))
   (set-frame-parameter nil 'alpha-background 
                        (if (string= state "opaque") 100 85)))
-
 ;; Toggle function that syncs with system
 (defun toggle-emacs-transparency ()
   "Toggle emacs frame transparency and sync with system state."
@@ -191,7 +173,6 @@ State is persisted in /tmp/transparency-state for new windows.
   ;; Just call the system-wide toggle script which handles everything
   (start-process-shell-command 
    "toggle-transparency" nil "toggle-transparency"))
-
 ;; Watch for transparency state changes from external toggles
 (when (functionp 'file-notify-add-watch)
   (let ((state-file "/tmp/transparency-state"))
@@ -202,7 +183,6 @@ State is persisted in /tmp/transparency-state for new windows.
             (dolist (frame (frame-list))
               (set-frame-parameter frame 'alpha-background 
                                    (if (string= state "opaque") 100 85)))))))))
-
 ;; Watch for pywal color changes
 (defun my/watch-pywal-colors ()
   "Set up file watcher for pywal colors.json to auto-reload theme."
@@ -213,11 +193,9 @@ State is persisted in /tmp/transparency-state for new windows.
           (lambda (event)
             (when (eq (nth 1 event) 'changed)
               (reload-pywal-theme))))))))
-
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
 #+end_src
-
 
 * Org-Roam Configuration
 
@@ -227,7 +205,6 @@ knowledge management system with concepts, lectures, readings, and projects.
 ** Org-Roam UI
 
 Configure org-roam-ui for visual graph navigation of my knowledge base.
-
 #+begin_src emacs-lisp
 (use-package! org-roam-ui
   :after org-roam
@@ -249,7 +226,6 @@ My capture templates support different types of content in my knowledge system:
 - *Projects* (=p=): Personal project overviews
 - *Inbox* (=i=): Quick idea capture for later processing
 - *Journal* (=j=): Reflective daily/weekly notes
-
 #+begin_src emacs-lisp
 (after! org-roam
   (setq org-roam-v2-ack t)
@@ -296,11 +272,9 @@ to a standalone concept node. The heading's contents are copied into the new
 concept file under the =* Overview= section, and a reference link to the original
 heading is added to the concept's =* References= section. The original heading
 is preserved (not deleted).
-
 #+begin_src emacs-lisp
   (defun my/org-roam-promote-heading-to-concept ()
     "Promote current heading into a new concept node.
-
 This:
 - Creates `concepts/<slug>.org` (if missing) with a scaffold that uses '* Overview'.
 - Copies the current heading's subtree (content below the heading line) into
@@ -309,12 +283,10 @@ This:
   links to that heading automatically resolve to the new concept file.
 - Removes the ID from the original heading to avoid duplicates.
 - Inserts a link to the new concept in the original file's '* Relations' section as a bullet point.
-
 It does NOT delete or replace the original heading." 
     (interactive)
     (unless (org-at-heading-p)
       (user-error "Not at a heading"))
-
     (let* ((title (nth 4 (org-heading-components)))
            (node (org-roam-node-create :title title))
            (slug (org-roam-node-slug node))
@@ -390,7 +362,6 @@ It does NOT delete or replace the original heading."
                   ;; Insert the trimmed body content
                   (insert (string-trim body) "\n")
                   (save-buffer)))))
-
           ;; Insert a link to the NEW concept into the original file's *Relations section
           (save-excursion
             (goto-char (point-min))
@@ -411,7 +382,6 @@ It does NOT delete or replace the original heading."
 *** Insert File Link
 
 Insert a link to an external file (useful for linking to project files, GitHub repos, etc).
-
 #+begin_src emacs-lisp
   (defun my/insert-file-link (path)
     "Insert an org file link to PATH with basename as description."
@@ -422,7 +392,6 @@ Insert a link to an external file (useful for linking to project files, GitHub r
 *** Add Heading ID
 
 Add a UUID to a heading with a human-readable alias for easier referencing.
-
 #+begin_src emacs-lisp
   (defun my/add-heading-id ()
     "Add org-id UUID to heading with filename-heading alias for org-roam."
@@ -439,7 +408,6 @@ Add a UUID to a heading with a human-readable alias for easier referencing.
 *** Insert Heading Link
 
 Interactive function to pick an org file and heading, then insert a link with proper ID.
-
 #+begin_src emacs-lisp
   (defun my/insert-heading-link ()
     "Pick an org file recursively, then link to a heading with org-id."
@@ -480,7 +448,6 @@ Interactive function to pick an org file and heading, then insert a link with pr
 ** Keybindings
 
 All org-roam related keybindings are under the =SPC n= prefix.
-
 #+begin_src emacs-lisp
   (map! :leader
         :desc "Promote heading to concept" "n P" #'my/org-roam-promote-heading-to-concept
@@ -493,9 +460,7 @@ All org-roam related keybindings are under the =SPC n= prefix.
         :desc "Open graph UI" "n g" #'org-roam-ui-open
         :desc "Capture new node" "n c" #'org-roam-capture)
 #+end_src
-
 Close the =after! org-roam= block:
-
 #+begin_src emacs-lisp
 )
 #+end_src
@@ -503,7 +468,6 @@ Close the =after! org-roam= block:
 * Lecture Processing
 
 Helper function to mark a lecture as processed and move it from =raw/= to =processed/=.
-
 #+begin_src emacs-lisp
 (defun my/mark-lecture-processed ()
   "Mark current lecture note as processed and move to processed directory."
@@ -522,14 +486,12 @@ Helper function to mark a lecture as processed and move it from =raw/= to =proce
       (rename-file file dest 1)
       (find-file dest)
       (message "Lecture processed & moved."))))
-
 (map! :leader :desc "Process lecture" "n L" #'my/mark-lecture-processed)
 #+end_src
 
 * File Navigation
 
 Use =consult-fd= for live, telescope-like file finding without caching.
-
 #+begin_src emacs-lisp
 (map! :leader :desc "Find file (live)" "SPC" #'consult-fd)
 #+end_src
@@ -537,7 +499,6 @@ Use =consult-fd= for live, telescope-like file finding without caching.
 ** Performance: Fast Search Tools
 
 Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations.
-
 #+begin_src emacs-lisp
 ;; Use fd instead of find for projectile
 (after! projectile
@@ -546,19 +507,16 @@ Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations
           projectile-generic-command "fd . -0 --type f --color=never"
           projectile-indexing-method 'alien
           projectile-enable-caching nil)))  ; No cache needed with fd
-
 ;; Use ripgrep for project search
 (after! counsel
   (when (executable-find "rg")
     (setq counsel-rg-base-command "rg --no-heading --line-number --color never %s .")))
-
 ;; Configure consult to use ripgrep and fd
 (after! consult
   (when (executable-find "rg")
     (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number --search-zip"))
   (when (executable-find "fd")
     (setq consult-fd-args "fd --color=never --full-path --hidden --exclude .git")))
-
 ;; Use ripgrep for Doom's default search
 (after! vertico
   (when (executable-find "rg")
@@ -568,7 +526,6 @@ Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations
 ** Yazi Integration (eee.el)
 
 Launch yazi file manager in external terminal with Emacs integration.
-
 #+begin_src emacs-lisp
 (use-package! eee
   :config
@@ -585,15 +542,13 @@ Launch yazi file manager in external terminal with Emacs integration.
 
 * AI Integration: GPTel
 
-GPTel provides AI assistance directly in Emacs. 
-
+GPTel provides AI assistance directly in Emacs.
 #+begin_src emacs-lisp
 (use-package! gptel
   :config
   (setq gptel-model 'gpt-5-mini
         gptel-backend (gptel-make-gh-copilot "Copilot")))
 #+end_src
-
 To use GPTel:
 - =M-x gptel= -- Open a chat buffer
 - =M-x gptel-menu= -- Select model/backend
@@ -603,7 +558,6 @@ To use GPTel:
 
 Show your Emacs activity on Discord using emacs-rpc.
 Lazy-loaded to avoid startup overhead.
-
 #+begin_src emacs-lisp
 (use-package! presence
   :defer 5  ; Load 5 seconds after startup (lazy-load for performance)
@@ -649,7 +603,6 @@ Lazy-loaded to avoid startup overhead.
 * Org Agenda
 
 Configure org-agenda to search the entire brain2 directory for TODOs and scheduled items.
-
 #+begin_src emacs-lisp
 (after! org
   (setq org-agenda-files '("~/Documents/brain2/")
@@ -660,90 +613,103 @@ Configure org-agenda to search the entire brain2 directory for TODOs and schedul
 
 * Org Formatting
 
-Automatically format org files with consistent spacing:
-- No blank line between heading and properties drawer
-- Blank line after properties drawer before content
-- Blank line after headings before content
-
+Simple, clean formatting for org files:
+- Heading, then immediately PROPERTIES (if any)
+- Then immediately SCHEDULED/DEADLINE (if any)
+- Then ONE blank line before body content (if any)
+- ONE blank line before next heading at same/higher level
 #+begin_src emacs-lisp
 (after! org
   (defun my/org-format-buffer ()
-    "Format org buffer with consistent spacing."
+    "Format org buffer with consistent, clean spacing matching example.org style."
     (interactive)
-    (message "Running org-format-buffer...")
     (save-excursion
+      ;; First, remove ALL blank lines in entire buffer
       (goto-char (point-min))
-      (while (re-search-forward "^\\*+ " nil t)
-        (let ((heading-pos (line-beginning-position)))
-          ;; Check if next line is properties drawer
-          (forward-line 1)
-          (when (looking-at "^[ \t]*:PROPERTIES:")
-            ;; Remove any blank lines between heading and properties
-            (goto-char heading-pos)
-            (forward-line 1)
-            (while (and (not (looking-at "^[ \t]*:PROPERTIES:"))
-                       (looking-at-p "^\\s-*$"))
-              (delete-region (line-beginning-position) (1+ (line-end-position))))
-            ;; Find end of properties
-            (when (re-search-forward "^[ \t]*:END:" nil t)
-              (forward-line 1)
-              ;; Ensure exactly one blank line after properties
-              (let ((content-start (point)))
-                (while (looking-at-p "^\\s-*$")
-                  (forward-line 1))
-                (unless (= (point) (1+ content-start))
-                  (delete-region content-start (point))
-                  (goto-char content-start)
-                  (unless (or (looking-at "^\\*") (eobp))
-                    (insert "\n"))))))
-          ;; If no properties, ensure blank line after heading
-          (goto-char heading-pos)
-          (forward-line 1)
-          (unless (or (looking-at "^[ \t]*:PROPERTIES:")
-                     (looking-at-p "^\\s-*$")
-                     (looking-at "^\\*")
-                     (eobp))
-            (insert "\n")))))
-    
-    ;; Ensure blank line before each heading (after content)
-    (save-excursion
+      (while (re-search-forward "\n\n+" nil t)
+        (replace-match "\n"))
+      
+      ;; Add blank line after title/filetags section
       (goto-char (point-min))
-      ;; Skip first heading
-      (when (re-search-forward "^\\*+ " nil t)
-        (beginning-of-line)
-        (while (re-search-forward "^\\*+ " nil t)
-          (beginning-of-line)
-          (let ((heading-pos (point)))
-            (forward-line -1)
-            ;; If previous line is not blank and not a heading, add blank line
-            (when (and (not (looking-at-p "^\\s-*$"))
-                       (not (looking-at "^\\*")))
-              (end-of-line)
-              (insert "\n"))
-            ;; Move past this heading to continue loop
-            (goto-char heading-pos)
-            (forward-line 1))))))
-  
-   ;; Run formatting on save
-   (add-hook 'org-mode-hook
-     (lambda ()
-       (add-hook 'before-save-hook #'my/org-format-buffer nil t))))
+      (when (re-search-forward "^#\\+\\(TITLE\\|FILETAGS\\):" nil t)
+        (forward-line 1)
+        (while (looking-at "^#\\+")
+          (forward-line 1))
+        (when (looking-at "^:PROPERTIES:")
+          (re-search-forward "^:END:" nil t)
+          (forward-line 1))
+        (when (looking-at "^\\*")
+          (insert "\n")))
+      
+      ;; Process all headings
+      (goto-char (point-min))
+      (while (re-search-forward "^\\(\\*+\\) " nil t)
+        (forward-line 1)
+        (when (looking-at "^[ \t]*:PROPERTIES:")
+          (re-search-forward "^[ \t]*:END:" nil t)
+          (forward-line 1))
+        (while (looking-at "^[ \t]*\\(SCHEDULED:\\|DEADLINE:\\|CLOSED:\\)")
+          (forward-line 1))
+        (when (looking-at "^[ \t]*:LOGBOOK:")
+          (re-search-forward "^[ \t]*:END:" nil t)
+          (forward-line 1))
+        (let ((content-start (point)))
+          (cond
+           ((eobp)
+            (insert "\n"))
+           ((looking-at "^\\*")
+            (insert "\n"))
+           (t
+            (goto-char content-start)
+            (insert "\n")
+            (if (re-search-forward "^\\*" nil t)
+                (progn
+                  (beginning-of-line)
+                  (insert "\n")
+                  (beginning-of-line))
+              (goto-char (point-max))
+              (unless (bolp)
+                (insert "\n")))))))
+      
+      ;; Clean up trailing blank lines
+      (goto-char (point-max))
+      (while (and (> (point) 1)
+                  (eq (char-before) ?\n)
+                  (eq (char-before (1- (point))) ?\n))
+        (delete-char -1))))
+   
+   ;; Enable auto-format on save
+    (add-hook 'org-mode-hook
+      (lambda ()
+        (add-hook 'before-save-hook #'my/org-format-buffer nil t)))
+   )
+#+end_src
+
+* Org Inline Images
+
+Optimize inline image display performance by limiting the display width.
+This dramatically reduces lag when scrolling past large screenshots (e.g., 1920x1080).
+Images are displayed at max 800px width while the full-resolution files remain unchanged.
+To view the full resolution, open the image externally with =RET= on the link.
+#+begin_src emacs-lisp
+(after! org
+  ;; Display images at max 800px width instead of full resolution
+  ;; This reduces rendering overhead for large screenshots
+  (setq org-image-actual-width 600)
+  (setq org-image-align 'center))
 #+end_src
 
 * Zen Mode Customization
 
 Configure zen mode (writeroom-mode) with smaller font, wider margins, no line numbers, and hidden org stars.
-
 #+begin_src emacs-lisp
 (setq +zen-text-scale 1)           ;; Font size scale (1 = one size larger)
 (setq writeroom-width 70)          ;; Column width (narrower = wider margins)
-
 ;; Configure org-modern to always be on for org-mode
 (after! org-modern
   (setq org-modern-hide-stars 'leading)
   ;; Enable org-modern globally
   (add-hook 'org-mode-hook #'org-modern-mode))
-
 ;; Zen mode hook - hide line numbers, adjust org-modern star display
 (add-hook 'writeroom-mode-hook
   (lambda ()
@@ -760,17 +726,13 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
           (setq-local org-modern-hide-stars 'leading))))))
 #+end_src
 
-
-
 * Dashboard Customization
 
 #+begin_src emacs-lisp
 ;; Use custom emacs logo image as the dashboard banner with minimal menu.
-
 ;; Set BEFORE doom-dashboard loads - use pre-scaled high-quality XPM
 (setq +doom-dashboard-banner-file "default.xpm"
       +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
-
 (setq +doom-dashboard-menu-sections
       '(("Open project"
          :icon (nerd-icons-sucicon "nf-custom-folder_git" :face 'doom-dashboard-menu-title :height 1.3)
@@ -778,12 +740,9 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
         ("Open documentation"
          :icon (nerd-icons-faicon "nf-fa-book_skull" :face 'doom-dashboard-menu-title :height 1.3)
          :action doom/help)))
-
 (after! doom-dashboard
-
   ;; Adjust banner padding for better vertical centering
   (setq +doom-dashboard-banner-padding '(8 . 4))
-
   ;; Override the banner widget to properly center the image
   (defun doom-dashboard-widget-banner ()
     (let ((point (point)))
@@ -802,7 +761,6 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
                                  ?\n)))
         ;; Fallback to ASCII banner in terminal mode (optional)
         nil)))
-
   ;; Custom shortmenu with tighter spacing - use single newline instead of double
   (defun my/doom-dashboard-widget-shortmenu ()
     (insert "\n")
@@ -855,13 +813,11 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
                            "")
                        'face 'doom-dashboard-menu-desc))))
            "\n")))))  ;; Use single \n instead of \n\n
-
   ;; Override dashboard widgets - remove loaded time, keep banner and menu
   (setq +doom-dashboard-functions
         '(doom-dashboard-widget-banner
           my/doom-dashboard-widget-shortmenu
           doom-dashboard-widget-footer))
-
   ;; Force reload dashboard to apply changes
   (when (get-buffer +doom-dashboard-name)
     (+doom-dashboard-reload t)))
@@ -871,7 +827,6 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
 
 The problem: Evil intercepts ESC globally before vterm can handle it.
 The solution: Disable Evil's ESC keybinding in vterm buffers.
-
 #+begin_src emacs-lisp
 (after! vterm
   (add-hook 'vterm-mode-hook
@@ -883,6 +838,23 @@ The solution: Disable Evil's ESC keybinding in vterm buffers.
       (evil-define-key 'insert vterm-mode-map
         (kbd "C-c C-c") 'evil-normal-state))))
 #+end_src
+
+* Circe IRC Configuration
+
+Configure Circe for automatic authentication with Libera Chat using SASL.
+#+begin_src emacs-lisp
+(setq circe-network-options
+      '(("Libera Chat"
+         :tls t
+         :nick "Crocod1le"
+         :sasl-username "Crocod1le"
+         :sasl-password "Eight0011!!")))
+#+end_src
+
+To connect to Libera Chat with automatic authentication, simply run:
+- =M-x circe RET Libera Chat RET=
+
+This will connect you to Libera Chat and automatically authenticate your account.
 
 <!-- Local Variables: -->
 <!-- gptel-model: gpt-5-mini -->
