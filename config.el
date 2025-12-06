@@ -22,7 +22,7 @@
 ;; Less aggressive auto-revert checks
 (setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
 (setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
-;; (setq doom-font (font-spec :family "Fira Code" :size 12 :weight 'semi-light)
+;; (setq doom-font (font-spec :family "Iosevka" :size 12 :weight 'semi-light)
 ;;       doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
 (use-package! ewal
   :init (setq ewal-use-built-in-always-p nil
@@ -96,32 +96,34 @@
            :if-new (file+head "academic/lectures/raw/%<%Y-%m-%d>-${slug}.org"
                               "#+TITLE: %<%Y-%m-%d> ${title} Lecture\n#+FILETAGS: :lecture:raw:\n")
            :unnarrowed t)
-          ("c" "Concept node" plain
-           "* Overview\n%?\n* Context\n* Relations\n* Applications\n* References"
-           :if-new (file+head "concepts/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :concept:seed:\n")
-           :unnarrowed t)
-          ("r" "Reading note" plain
-           "* Summary\n%?\n* Key Claims\n* Methods\n* Critical Reflections\n* Links"
-           :if-new (file+head "readings/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :reading:seed:\n:PROPERTIES:\n:ROAM_REFS: ${ref}\n:END:\n")
-           :unnarrowed t)
+           ("c" "Concept node" plain
+            "* Overview\n%?\n* Context\n* Relations\n* Applications\n* References"
+            :if-new (file+head "concepts/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :concept:seed:\n")
+            :unnarrowed t)
+           ("rd" "Reading note" plain
+            "* Summary\n%?\n* Key Claims\n* Methods\n* Critical Reflections\n* Links"
+            :if-new (file+head "readings/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :reading:seed:\n:PROPERTIES:\n:ROAM_REFS: ${ref}\n:END:\n")
+            :unnarrowed t)
+           ("r" "Recipe" plain
+            "* Ingredients\n\n- \n\n* Prep\n\n- \n\n* Procedure\n\n1. \n\n* Notes\n\n%?"
+            :if-new (file+head "recipes/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :recipe:\n")
+            :unnarrowed t)
           ("a" "Assignment plan" plain
            "* Brief\n%?\n* Requirements\n* Sources\n* Outline\n* Timeline\n* Status"
            :if-new (file+head "assignments/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :assignment:active:\n")
            :unnarrowed t)
-          ("p" "Project node" plain
-           "* Overview\n%?\n* Goals\n* Links\n* Decisions\n* TODO\n* Resources"
-           :if-new (file+head "projects/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :project:active:\n")
-           :unnarrowed t)
-          ("i" "Weekly todo" item
-           "TODO %?"
-           :if-new (file+head "inbox.org" "#+TITLE: Inbox\n#+FILETAGS: :inbox:\n\n* This Week\n\n* Recap\n")
-           :prepend t
-           :immediate-finish nil
-           :unnarrowed t)
-          ("j" "Daily" plain
-           "%?"
-           :if-new (file+head "journal/%<%Y-%m-%d>.org" "#+TITLE: %<%B %d, %Y>\n#+FILETAGS: :daily:\n")
-           :unnarrowed t)))
+           ("p" "Project node" plain
+            "* Overview\n%?\n* Goals\n* Links\n* Decisions\n* TODO\n* Resources"
+            :if-new (file+head "projects/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :project:active:\n")
+            :unnarrowed t)))
+  
+  ;; Org-Roam Dailies Configuration
+  (setq org-roam-dailies-directory "daily/")
+  (setq org-roam-dailies-capture-templates
+        '(("d" "Daily" entry
+           "* <%<%Y-%m-%d %a %H:%M>>\n%?"
+           :target (file+head "%<%Y-%m-%d>.org"
+                              "#+TITLE: %<%B %d, %Y>\n#+FILETAGS: :daily:\n")))))
 (defun my/org-roam-promote-heading-to-concept ()
     "Promote current heading into a new concept node.
 This:
@@ -225,7 +227,7 @@ It does NOT delete or replace the original heading."
               (unless (bolp) (insert "\n"))
               (insert (format "* Relations\n- [[id:%s][%s]]\n" new-id title))
               (save-buffer)))
-          (message "Promoted '%s' → %s (id:%s) and inserted link in original file" title file new-id)))))
+           (message "Promoted '%s' → %s (id:%s) and inserted link in original file" title file new-id)))))
 (defun my/insert-file-link (path)
   "Insert an org file link to PATH with basename as description."
   (interactive "fFile: ")
@@ -284,7 +286,6 @@ It does NOT delete or replace the original heading."
       :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
       :desc "Open graph UI" "n g" #'org-roam-ui-open
       :desc "Capture new node" "n c" #'org-roam-capture)
-)
 (defun my/mark-lecture-processed ()
   "Mark current lecture note as processed and move to processed directory."
   (interactive)
@@ -327,8 +328,8 @@ It does NOT delete or replace the original heading."
     (setq +default-want-RET-continue-p nil)))
 (use-package! eee
   :config
-  ;; Use wrapper script that applies transparency state to new st windows
-  (setq ee-terminal-command "/home/croc/.config/scripts/st-with-transparency")
+  ;; Use kitty terminal for yazi and other TUI tools
+  (setq ee-terminal-command "kitty")
   
   ;; Keybindings for yazi and other TUI tools
   (map! :leader
@@ -386,6 +387,17 @@ It does NOT delete or replace the original heading."
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
 (after! org
+  ;; Set up org-capture templates for inbox
+  (setq org-capture-templates
+        '(("i" "Inbox TODO" entry
+           (file+olp "~/Documents/brain2/inbox.org" "Global")
+           "** TODO %?\n"
+           :empty-lines 1)
+          ("w" "Weekly TODO" entry
+           (file+olp "~/Documents/brain2/inbox.org" "This Week")
+           "** TODO %?\n"
+           :empty-lines 1)))
+  
   (defun my/org-format-buffer ()
     "Format org buffer with consistent, clean spacing matching example.org style."
     (interactive)
@@ -436,6 +448,29 @@ It does NOT delete or replace the original heading."
               (goto-char (point-max))
               (unless (bolp)
                 (insert "\n")))))))
+      
+      ;; Add blank lines before attachment links (but not after captions)
+      (goto-char (point-min))
+      (while (re-search-forward "^\\[\\[attachment:" nil t)
+        (beginning-of-line)
+        ;; Check if previous line is not blank and not an italic caption
+        (unless (or (bobp)
+                    (save-excursion
+                      (forward-line -1)
+                      (or (looking-at "^[ \t]*$")
+                          (looking-at "^/"))))
+          (insert "\n"))
+        (forward-line 1))
+      
+      ;; Add blank lines after italic captions (when followed by attachment or body text)
+      (goto-char (point-min))
+      (while (re-search-forward "^/.+/$" nil t)
+        (forward-line 1)
+        ;; Add blank line if next line exists and is not blank and not a heading
+        (unless (or (eobp)
+                    (looking-at "^[ \t]*$")
+                    (looking-at "^\\*"))
+          (insert "\n")))
       
       ;; Clean up trailing blank lines
       (goto-char (point-max))
