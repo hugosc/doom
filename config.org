@@ -467,6 +467,22 @@ All org-roam related keybindings are under the =SPC n= prefix.
         :desc "Capture new node" "n c" #'org-roam-capture)
 #+end_src
 
+** Buffer Navigation
+
+Keybindings for cycling through buffers with Alt+Shift+H/L.
+We need to unbind evil-org-mode's bindings which override the global ones.
+#+begin_src emacs-lisp
+;; Unbind evil-org-mode's M-H and M-L bindings
+(after! evil-org
+  (map! :map evil-org-mode-map
+        :nvi "M-H" nil
+        :nvi "M-L" nil))
+
+;; Now set our buffer navigation bindings
+(map! :nvi "M-H" #'previous-buffer
+      :nvi "M-L" #'next-buffer)
+#+end_src
+
 * Lecture Processing
 
 Helper function to mark a lecture as processed and move it from =raw/= to =processed/=.

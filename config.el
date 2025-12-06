@@ -286,6 +286,15 @@ It does NOT delete or replace the original heading."
       :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
       :desc "Open graph UI" "n g" #'org-roam-ui-open
       :desc "Capture new node" "n c" #'org-roam-capture)
+;; Unbind evil-org-mode's M-H and M-L bindings
+(after! evil-org
+  (map! :map evil-org-mode-map
+        :nvi "M-H" nil
+        :nvi "M-L" nil))
+
+;; Now set our buffer navigation bindings
+(map! :nvi "M-H" #'previous-buffer
+      :nvi "M-L" #'next-buffer)
 (defun my/mark-lecture-processed ()
   "Mark current lecture note as processed and move to processed directory."
   (interactive)
