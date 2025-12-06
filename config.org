@@ -606,6 +606,7 @@ Configure org-agenda to search the entire brain2 directory for TODOs and schedul
 #+begin_src emacs-lisp
 (after! org
   (setq org-agenda-files '("~/Documents/brain2/")
+        org-log-done 'time
         org-hide-emphasis-markers t)
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
@@ -850,12 +851,9 @@ Configure Circe for automatic authentication with Libera Chat using SASL.
          :sasl-username "Crocod1le"
          :sasl-password "Eight0011!!")))
 #+end_src
-
 To connect to Libera Chat with automatic authentication, simply run:
 - =M-x circe RET Libera Chat RET=
-
 This will connect you to Libera Chat and automatically authenticate your account.
-
 <!-- Local Variables: -->
 <!-- gptel-model: gpt-5-mini -->
 <!-- gptel--backend-name: "Copilot" -->

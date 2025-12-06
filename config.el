@@ -381,6 +381,7 @@ It does NOT delete or replace the original heading."
   (setq presence-buffer-details-format-function #'my/presence-buffer-details))
 (after! org
   (setq org-agenda-files '("~/Documents/brain2/")
+        org-log-done 'time
         org-hide-emphasis-markers t)
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
