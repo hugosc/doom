@@ -39,11 +39,11 @@
        ligatures         ; ligatures and symbols to make your code pretty again
        minimap           ; DISABLED - heavy CPU/memory overhead
        modeline          ; snazzy, Atom-inspired modeline, plus API
-       nav-flash         ; blink cursor line after big motions
+       ;;nav-flash         ; blink cursor line after big motions
        ;;neotree           ; a project drawer, like NERDTree for vim
        ophints           ; highlight the region an operation acts on
        (popup +defaults)   ; tame sudden yet inevitable temporary windows
-       ;;smooth-scroll     ; DISABLED - aesthetic overhead on every scroll
+       smooth-scroll     ; DISABLED - aesthetic overhead on every scroll
        ;;tabs              ; a tab bar for Emacs
        ;;treemacs          ; DISABLED - using yazi instead for file management
        ;;unicode           ; extended unicode support for various languages
@@ -69,7 +69,7 @@
        word-wrap         ; soft wrapping with language-aware indent
 
        :emacs
-       dired             ; making dired pretty [functional]
+       (dired +icons)    ; making dired pretty [functional]
        electric          ; smarter, keyword-based electric-indent
        ;;eww               ; the internet is gross
        ;;ibuffer           ; interactive buffer management

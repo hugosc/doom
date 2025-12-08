@@ -291,7 +291,6 @@ It does NOT delete or replace the original heading."
   (map! :map evil-org-mode-map
         :nvi "M-H" nil
         :nvi "M-L" nil))
-
 ;; Now set our buffer navigation bindings
 (map! :nvi "M-H" #'previous-buffer
       :nvi "M-L" #'next-buffer)
@@ -345,11 +344,30 @@ It does NOT delete or replace the original heading."
         :desc "Yazi (current dir)" "f y" #'ee-yazi
         :desc "Yazi (project)" "f Y" #'ee-yazi-project
         :desc "Ripgrep search" "s g" #'ee-rg
-        :desc "Lazygit" "g z" #'ee-lazygit))
+         :desc "Lazygit" "g z" #'ee-lazygit))
+(after! dired
+  (defun my/dired-copy-file-to-clipboard ()
+    "Copy the file at point to system clipboard for pasting into applications."
+    (interactive)
+    (let ((file (dired-get-filename)))
+      (if (file-directory-p file)
+          (message "Cannot copy directory to clipboard")
+        (let* ((mime-type (string-trim
+                           (shell-command-to-string
+                            (format "file --mime-type -b %s" (shell-quote-argument file)))))
+               (cmd (format "xclip -selection clipboard -t %s -i %s"
+                            mime-type
+                            (shell-quote-argument file))))
+          (call-process-shell-command cmd nil 0)
+          (message "Copied file to clipboard: %s" (file-name-nondirectory file))))))
+  
+  (map! :map dired-mode-map
+        :n "y Y" #'my/dired-copy-file-to-clipboard))
 (use-package! gptel
   :config
   (setq gptel-model 'gpt-5-mini
-        gptel-backend (gptel-make-gh-copilot "Copilot")))
+        gptel-backend (gptel-make-gh-copilot "Copilot")
+        gptel-default-mode 'org-mode))
 (use-package! presence
   :defer 5  ; Load 5 seconds after startup (lazy-load for performance)
   :commands (presence-mode)
@@ -389,12 +407,37 @@ It does NOT delete or replace the original heading."
           (format "In %s: %s" project file)
         (format "Editing %s" file))))
   (setq presence-buffer-details-format-function #'my/presence-buffer-details))
+(setq org-agenda-start-with-log-mode t)
 (after! org
   (setq org-agenda-files '("~/Documents/brain2/")
         org-log-done 'time
         org-hide-emphasis-markers t)
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
+  ;; Config for custom agenda view
+(setq org-agenda-custom-commands
+ '(("p" "Planning"
+             ((tags-todo "+@planning"
+                         ((org-agenda-overriding-header "Planning Tasks")))
+              (tags-todo "-{.*}"
+                         ((org-agenda-overriding-header "Untagged Tasks")))
+              (todo ".*" ((org-agenda-files '("~/Documents/brain2/inbox.org"))
+                          (org-agenda-overriding-header "Unprocessed Inbox Items")))))
+        ("d" "Daily Agenda"
+         ((agenda "" ((org-agenda-span 'day)
+                      (org-deadline-warning-days 7)))
+          (tags-todo "+PRIORITY=\"A\""
+                     ((org-agenda-overriding-header "High Priority Tasks")))))
+        ("w" "Weekly Review"
+         ((agenda ""
+                  ((org-agenda-overriding-header "Completed Tasks")
+                   (org-agenda-skip-function '(org-agenda-skip-entry-if 'nottodo 'done))
+                   (org-agenda-span 'week)))
+          (agenda ""
+                  ((org-agenda-overriding-header "Unfinished Scheduled Tasks")
+                   (org-agenda-skip-function '(org-agenda-skip-entry-if 'todo 'done))
+                   (org-agenda-span 'week))))))
+      )
 (after! org
   ;; Set up org-capture templates for inbox
   (setq org-capture-templates
