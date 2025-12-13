@@ -31,14 +31,79 @@
 (use-package! ewal-doom-themes
   :after ewal
   :config (progn
+            ;; Load our ewal fix to correct color shading for light themes
+            (load-file (expand-file-name "~/.config/doom/ewal-fix.el"))
             (load-theme 'ewal-doom-one t)
             (enable-theme 'ewal-doom-one)))
+(defun my/detect-doom-preset ()
+  "Detect which doom preset theme is currently active from pywal cache.
+Returns theme name like 'gruvbox-light' or nil if not a doom preset."
+  (let* ((cache-file (expand-file-name "~/.cache/wal/colors.json"))
+         (preset-dir (expand-file-name "~/.config/wal/colorschemes/dark/"))
+         (json-object-type 'alist)
+         (json-array-type 'list))
+    (when (file-exists-p cache-file)
+      (let* ((current-colors (json-read-file cache-file))
+             (current-bg (alist-get 'background (alist-get 'special current-colors)))
+             (current-fg (alist-get 'foreground (alist-get 'special current-colors)))
+             (current-c0 (alist-get 'color0 (alist-get 'colors current-colors))))
+        
+        ;; Check all doom preset files for a match
+        (catch 'found
+          (dolist (file (directory-files preset-dir nil "^doom-.*\\.json$"))
+            (let* ((preset-path (expand-file-name file preset-dir))
+                   (preset-colors (json-read-file preset-path))
+                   (preset-bg (alist-get 'background (alist-get 'special preset-colors)))
+                   (preset-fg (alist-get 'foreground (alist-get 'special preset-colors)))
+                   (preset-c0 (alist-get 'color0 (alist-get 'colors preset-colors))))
+              
+              ;; Match if bg, fg, and color0 all match
+              (when (and (string= current-bg preset-bg)
+                        (string= current-fg preset-fg)
+                        (string= current-c0 preset-c0))
+                ;; Extract theme name: "doom-gruvbox-light.json" -> "gruvbox-light"
+                (throw 'found (replace-regexp-in-string "\\.json$" "" 
+                              (replace-regexp-in-string "^doom-" "" file))))))
+          nil)))))
+
 (defun reload-pywal-theme ()
-  "Reload the pywal theme to reflect new colors."
+  "Reload theme - use original doom theme if preset, else use ewal."
   (interactive)
-  (ewal-load-colors)
-  (load-theme 'ewal-doom-one t)
-  (message "Pywal theme reloaded!"))
+  (let* ((colors-file (expand-file-name "~/.cache/wal/colors.json"))
+         (json-object-type 'alist)
+         (json-array-type 'list)
+         (colors (json-read-file colors-file))
+         (wallpaper (alist-get 'wallpaper colors))
+         ;; Check if wallpaper is actual path (not "None" string)
+         (is-wallpaper-based (and wallpaper 
+                                  (not (string= wallpaper "None"))
+                                  (file-exists-p wallpaper))))
+    
+    ;; Disable all old themes first to avoid conflicts
+    (mapc #'disable-theme custom-enabled-themes)
+    
+    (if is-wallpaper-based
+        ;; Wallpaper-based theme: use ewal with our fixes
+        (progn
+          (ewal-load-colors)
+          (load-theme 'ewal-doom-one t)
+          (message "Pywal theme reloaded (wallpaper-based)"))
+      
+      ;; No wallpaper or "None" = preset theme: try to load original doom theme
+      (let* ((scheme-name (my/detect-doom-preset))
+             (theme-symbol (when scheme-name 
+                            (intern (concat "doom-" scheme-name)))))
+        (if (and theme-symbol 
+                 (member theme-symbol (custom-available-themes)))
+            ;; Load original doom theme for perfect accuracy
+            (progn
+              (load-theme theme-symbol t)
+              (message "Loaded original doom theme: %s" theme-symbol))
+          ;; Fallback to ewal if original theme not found
+          (progn
+            (ewal-load-colors)
+            (load-theme 'ewal-doom-one t)
+            (message "Pywal theme reloaded (preset fallback to ewal)")))))))
 ;; Read transparency state from file
 (defun get-transparency-state ()
   "Read current transparency state from /tmp/transparency-state."
@@ -69,15 +134,24 @@
               (set-frame-parameter frame 'alpha-background 
                                    (if (string= state "opaque") 100 85)))))))))
 ;; Watch for pywal color changes
+(defvar my/pywal-reload-timer nil
+  "Timer for debouncing pywal theme reloads.")
+
 (defun my/watch-pywal-colors ()
-  "Set up file watcher for pywal colors.json to auto-reload theme."
+  "Set up file watcher for pywal colors.json to auto-reload theme.
+Debounced to prevent duplicate reloads when multiple hooks trigger."
   (when (functionp 'file-notify-add-watch)
-    (let ((colors-file (expand-file-name "~/.cache/wal/colorscheme.json")))
+    (let ((colors-file (expand-file-name "~/.cache/wal/colors.json")))
       (when (file-exists-p colors-file)
         (file-notify-add-watch colors-file '(change)
           (lambda (event)
             (when (eq (nth 1 event) 'changed)
-              (reload-pywal-theme))))))))
+              ;; Cancel existing timer to debounce
+              (when my/pywal-reload-timer
+                (cancel-timer my/pywal-reload-timer))
+              ;; Set new timer - reload after 0.2s of no changes
+              (setq my/pywal-reload-timer
+                    (run-at-time 0.2 nil #'reload-pywal-theme)))))))))
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
 (use-package! org-roam-ui
@@ -363,11 +437,39 @@ It does NOT delete or replace the original heading."
   
   (map! :map dired-mode-map
         :n "y Y" #'my/dired-copy-file-to-clipboard))
+(after! rustic
+  (setq lsp-rust-analyzer-server-display-inlay-hints t
+        lsp-rust-analyzer-display-lifetime-elision-hints-enable "skip_trivial"
+        lsp-rust-analyzer-display-parameter-hints t
+        lsp-rust-analyzer-display-closure-return-type-hints t))
+
+(after! eglot
+  ;; Set up environment for rust-analyzer
+  (setenv "PATH" (concat (expand-file-name "~/.cargo/bin") ":" (getenv "PATH")))
+  (setenv "RUSTUP_TOOLCHAIN" "stable-x86_64-unknown-linux-gnu")
+  
+  (add-to-list 'eglot-server-programs
+    '((rust-ts-mode rust-mode) .
+      ("rust-analyzer" :initializationOptions
+       (:checkOnSave t
+        :procMacro (:enable t)
+        :cargo (:buildScripts (:enable t)))))))
 (use-package! gptel
   :config
   (setq gptel-model 'gpt-5-mini
         gptel-backend (gptel-make-gh-copilot "Copilot")
-        gptel-default-mode 'org-mode))
+        gptel-default-mode 'org-mode)
+  
+  ;; Preset for org-roam PKM work with psychology studies
+  (gptel-make-preset 'brain2beta
+    :description "Org-roam PKM assistant for psychology studies"
+    :backend "Copilot"
+    :model 'gpt-4.1
+    :system "You are a large language model living in my DOOM Emacs and a helpful assistant. We are currently operating within my org-roam based PKM, which I am learning to use to manage my life studying psychology and my interests. Respond concisely."
+    :stream t
+    :temperature 1.0
+    :include-reasoning t
+    :use-context 'system))
 (use-package! presence
   :defer 5  ; Load 5 seconds after startup (lazy-load for performance)
   :commands (presence-mode)
