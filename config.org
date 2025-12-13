@@ -145,9 +145,12 @@ to automatically match my wallpaper color scheme.
 #+end_src
 Helper functions for smart theme loading - detects doom presets vs wallpaper themes:
 #+begin_src emacs-lisp
-(defun my/detect-doom-preset ()
-  "Detect which doom preset theme is currently active from pywal cache.
-Returns theme name like 'gruvbox-light' or nil if not a doom preset."
+(defun my/detect-preset-theme ()
+  "Detect which preset theme is currently active from pywal cache.
+Returns (TYPE . NAME) where TYPE is 'doom or 'other, and NAME is the theme name.
+For doom themes: NAME is like 'gruvbox-light' (without 'doom-' prefix).
+For other themes: NAME is the full theme symbol like 'kuronami or 'wombat.
+Returns nil if not a preset theme (wallpaper-based)."
   (let* ((cache-file (expand-file-name "~/.cache/wal/colors.json"))
          (preset-dir (expand-file-name "~/.config/wal/colorschemes/dark/"))
          (json-object-type 'alist)
@@ -158,9 +161,9 @@ Returns theme name like 'gruvbox-light' or nil if not a doom preset."
              (current-fg (alist-get 'foreground (alist-get 'special current-colors)))
              (current-c0 (alist-get 'color0 (alist-get 'colors current-colors))))
         
-        ;; Check all doom preset files for a match
+        ;; Check all preset files for a match
         (catch 'found
-          (dolist (file (directory-files preset-dir nil "^doom-.*\\.json$"))
+          (dolist (file (directory-files preset-dir nil "\\.json$"))
             (let* ((preset-path (expand-file-name file preset-dir))
                    (preset-colors (json-read-file preset-path))
                    (preset-bg (alist-get 'background (alist-get 'special preset-colors)))
@@ -171,9 +174,13 @@ Returns theme name like 'gruvbox-light' or nil if not a doom preset."
               (when (and (string= current-bg preset-bg)
                         (string= current-fg preset-fg)
                         (string= current-c0 preset-c0))
-                ;; Extract theme name: "doom-gruvbox-light.json" -> "gruvbox-light"
-                (throw 'found (replace-regexp-in-string "\\.json$" "" 
-                              (replace-regexp-in-string "^doom-" "" file))))))
+                ;; Check if it's a doom theme or other theme
+                (if (string-match "^doom-\\(.*\\)\\.json$" file)
+                    ;; Doom theme: return ('doom . "gruvbox-light")
+                    (throw 'found (cons 'doom (match-string 1 file)))
+                  ;; Other theme: return ('other . 'kuronami)
+                  (throw 'found (cons 'other 
+                                     (intern (replace-regexp-in-string "\\.json$" "" file))))))))
           nil)))))
 
 (defun reload-pywal-theme ()
@@ -199,21 +206,41 @@ Returns theme name like 'gruvbox-light' or nil if not a doom preset."
           (load-theme 'ewal-doom-one t)
           (message "Pywal theme reloaded (wallpaper-based)"))
       
-      ;; No wallpaper or "None" = preset theme: try to load original doom theme
-      (let* ((scheme-name (my/detect-doom-preset))
-             (theme-symbol (when scheme-name 
-                            (intern (concat "doom-" scheme-name)))))
-        (if (and theme-symbol 
-                 (member theme-symbol (custom-available-themes)))
-            ;; Load original doom theme for perfect accuracy
+      ;; No wallpaper or "None" = preset theme: try to load original theme
+      (let* ((preset-info (my/detect-preset-theme))
+             (preset-type (car preset-info))
+             (preset-name (cdr preset-info)))
+        (cond
+         ;; Doom preset theme
+         ((eq preset-type 'doom)
+          (let ((theme-symbol (intern (concat "doom-" preset-name))))
+            (if (member theme-symbol (custom-available-themes))
+                (progn
+                  (load-theme theme-symbol t)
+                  (message "Loaded original doom theme: %s" theme-symbol))
+              ;; Fallback to ewal if doom theme not found
+              (progn
+                (ewal-load-colors)
+                (load-theme 'ewal-doom-one t)
+                (message "Doom theme %s not found, using ewal" theme-symbol)))))
+         
+         ;; Other preset theme (kuronami, wombat, etc.)
+         ((eq preset-type 'other)
+          (if (member preset-name (custom-available-themes))
+              (progn
+                (load-theme preset-name t)
+                (message "Loaded original theme: %s" preset-name))
+            ;; Fallback to ewal if theme not found
             (progn
-              (load-theme theme-symbol t)
-              (message "Loaded original doom theme: %s" theme-symbol))
-          ;; Fallback to ewal if original theme not found
-          (progn
-            (ewal-load-colors)
-            (load-theme 'ewal-doom-one t)
-            (message "Pywal theme reloaded (preset fallback to ewal)")))))))
+              (ewal-load-colors)
+              (load-theme 'ewal-doom-one t)
+              (message "Theme %s not found, using ewal" preset-name))))
+         
+         ;; No preset detected, use ewal
+         (t
+          (ewal-load-colors)
+          (load-theme 'ewal-doom-one t)
+          (message "Pywal theme reloaded (preset fallback to ewal)")))))))
 #+end_src
 
 ** Transparency Toggle and Pywal Auto-Reload
