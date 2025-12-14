@@ -72,3 +72,6 @@
 ;; Additional themes
 (package! kuronami-theme)
 (package! labburn-theme)
+
+;; GPTel Agent - AI agent mode for GPTel
+(package! gptel-agent)

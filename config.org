@@ -16,6 +16,7 @@
   - [[#fonts][Fonts]]
   - [[#theme-pywal-integration][Theme: Pywal Integration]]
   - [[#transparency-toggle-and-pywal-auto-reload][Transparency Toggle and Pywal Auto-Reload]]
+  - [[#theme-conversion-tools][Theme Conversion Tools]]
 - [[#org-roam-configuration][Org-Roam Configuration]]
   - [[#org-roam-ui][Org-Roam UI]]
   - [[#capture-templates][Capture Templates]]
@@ -27,8 +28,10 @@
 - [[#file-navigation][File Navigation]]
   - [[#performance-fast-search-tools][Performance: Fast Search Tools]]
   - [[#yazi-integration-eeeel][Yazi Integration (eee.el)]]
+  - [[#dired-configuration][Dired Configuration]]
 - [[#rust-configuration][Rust Configuration]]
 - [[#ai-integration-gptel][AI Integration: GPTel]]
+  - [[#gptel-agent][GPTel Agent]]
 - [[#discord-presence][Discord Presence]]
 - [[#org-agenda][Org Agenda]]
 - [[#org-formatting][Org Formatting]]
@@ -122,8 +125,8 @@ Doom exposes five font variables for customization:
 - =doom-serif-font= -- for the =fixed-pitch-serif= face
 Example configuration (commented out):
 #+begin_src emacs-lisp
-;; (setq doom-font (font-spec :family "Iosevka" :size 12 :weight 'semi-light)
-;;       doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
+;;(setq doom-font (font-spec :family "Iosevka" :size 14 :weight 'semi-light)
+;;doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
 #+end_src
 
 ** Theme: Pywal Integration
@@ -182,7 +185,6 @@ Returns nil if not a preset theme (wallpaper-based)."
                   (throw 'found (cons 'other 
                                      (intern (replace-regexp-in-string "\\.json$" "" file))))))))
           nil)))))
-
 (defun reload-pywal-theme ()
   "Reload theme - use original doom theme if preset, else use ewal."
   (interactive)
@@ -281,7 +283,6 @@ State is persisted in /tmp/transparency-state for new windows.
 ;; Watch for pywal color changes
 (defvar my/pywal-reload-timer nil
   "Timer for debouncing pywal theme reloads.")
-
 (defun my/watch-pywal-colors ()
   "Set up file watcher for pywal colors.json to auto-reload theme.
 Debounced to prevent duplicate reloads when multiple hooks trigger."
@@ -299,6 +300,15 @@ Debounced to prevent duplicate reloads when multiple hooks trigger."
                     (run-at-time 0.2 nil #'reload-pywal-theme)))))))))
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
+#+end_src
+
+** Theme Conversion Tools
+
+Load the theme-to-pywal script for converting Emacs themes to pywal JSON presets.
+This provides commands like =M-x theme-to-pywal-generate-melpa-theme= for converting
+newly installed themes.
+#+begin_src emacs-lisp
+(load-file (expand-file-name "~/.config/doom/theme-to-pywal.el"))
 #+end_src
 
 * Org-Roam Configuration
@@ -694,7 +704,6 @@ Configure rust-analyzer to use the correct sysroot from rustup.
         lsp-rust-analyzer-display-lifetime-elision-hints-enable "skip_trivial"
         lsp-rust-analyzer-display-parameter-hints t
         lsp-rust-analyzer-display-closure-return-type-hints t))
-
 (after! eglot
   ;; Set up environment for rust-analyzer
   (setenv "PATH" (concat (expand-file-name "~/.cargo/bin") ":" (getenv "PATH")))
@@ -734,6 +743,31 @@ To use GPTel:
 - =M-x gptel-menu= -- Select model/backend
 - =C-u C-c RET= -- Open options menu to switch presets
 - In org-mode, select region and send to gptel for processing
+
+** GPTel Agent
+
+GPTel Agent extends gptel with autonomous agent capabilities - the LLM can take actions,
+browse the web, read/write files, and execute code. Requires gptel to be up to date.
+#+begin_src emacs-lisp
+(use-package! gptel-agent
+  :after gptel
+  :commands (gptel-agent)
+  :config
+  ;; Initialize agent tools and capabilities
+  (gptel-agent-update))
+  
+  ;; Optional: Configure agent directories for custom sub-agents
+  ;; (add-to-list 'gptel-agent-dirs "~/path/to/custom/agents")
+;; Keybinding for gptel-agent (set globally, not in use-package)
+(map! :leader
+      :prefix "o"
+      :desc "GPTel Agent" "l c" #'gptel-agent)
+#+end_src
+To use GPTel Agent:
+- =M-x gptel-agent= -- Open a dedicated agent session in current project
+- =C-u M-x gptel-agent= -- Open with prefix for more options
+- Include =@gptel-agent= in any gptel prompt to use agent capabilities in any buffer
+- Switch between presets: agent mode (full autonomy) and planning mode (read-only)
 
 * Discord Presence
 
@@ -970,10 +1004,8 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
 * Dashboard Customization
 
 #+begin_src emacs-lisp
-;; Use custom emacs logo image as the dashboard banner with minimal menu.
-;; Set BEFORE doom-dashboard loads - use pre-scaled high-quality XPM
-(setq +doom-dashboard-banner-file "default.xpm"
-      +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
+;; Use custom Emacs logo as the dashboard banner (300x300, Lanczos smoothed)
+(setq +doom-dashboard-banner-file "emacs-logo-300-smooth.xpm")
 (setq +doom-dashboard-menu-sections
       '(("Open project"
          :icon (nerd-icons-sucicon "nf-custom-folder_git" :face 'doom-dashboard-menu-title :height 1.3)

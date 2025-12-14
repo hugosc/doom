@@ -22,8 +22,8 @@
 ;; Less aggressive auto-revert checks
 (setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
 (setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
-;; (setq doom-font (font-spec :family "Iosevka" :size 12 :weight 'semi-light)
-;;       doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
+;;(setq doom-font (font-spec :family "Iosevka" :size 14 :weight 'semi-light)
+;;doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
 (use-package! ewal
   :init (setq ewal-use-built-in-always-p nil
               ewal-use-built-in-on-failure-p t
@@ -72,7 +72,6 @@ Returns nil if not a preset theme (wallpaper-based)."
                   (throw 'found (cons 'other 
                                      (intern (replace-regexp-in-string "\\.json$" "" file))))))))
           nil)))))
-
 (defun reload-pywal-theme ()
   "Reload theme - use original doom theme if preset, else use ewal."
   (interactive)
@@ -163,7 +162,6 @@ Returns nil if not a preset theme (wallpaper-based)."
 ;; Watch for pywal color changes
 (defvar my/pywal-reload-timer nil
   "Timer for debouncing pywal theme reloads.")
-
 (defun my/watch-pywal-colors ()
   "Set up file watcher for pywal colors.json to auto-reload theme.
 Debounced to prevent duplicate reloads when multiple hooks trigger."
@@ -181,6 +179,7 @@ Debounced to prevent duplicate reloads when multiple hooks trigger."
                     (run-at-time 0.2 nil #'reload-pywal-theme)))))))))
 ;; Auto-enable the color watcher when emacs starts
 (my/watch-pywal-colors)
+(load-file (expand-file-name "~/.config/doom/theme-to-pywal.el"))
 (use-package! org-roam-ui
   :after org-roam
   :hook (org-roam-mode . org-roam-ui-mode)
@@ -225,7 +224,7 @@ Debounced to prevent duplicate reloads when multiple hooks trigger."
            "* <%<%Y-%m-%d %a %H:%M>>\n%?"
            :target (file+head "%<%Y-%m-%d>.org"
                               "#+TITLE: %<%B %d, %Y>\n#+FILETAGS: :daily:\n")))))
-(defun my/org-roam-promote-heading-to-concept ()
+  (defun my/org-roam-promote-heading-to-concept ()
     "Promote current heading into a new concept node.
 This:
 - Creates `concepts/<slug>.org` (if missing) with a scaffold that uses '* Overview'.
@@ -329,64 +328,64 @@ It does NOT delete or replace the original heading."
               (insert (format "* Relations\n- [[id:%s][%s]]\n" new-id title))
               (save-buffer)))
            (message "Promoted '%s' → %s (id:%s) and inserted link in original file" title file new-id)))))
-(defun my/insert-file-link (path)
-  "Insert an org file link to PATH with basename as description."
-  (interactive "fFile: ")
-  (insert (format "[[file:%s][%s]]" (abbreviate-file-name path) (file-name-base path))))
-(defun my/add-heading-id ()
-  "Add org-id UUID to heading with filename-heading alias for org-roam."
-  (interactive)
-  (org-back-to-heading t)
-  (let* ((filename (file-name-base (buffer-file-name)))
-         (title (nth 4 (org-heading-components)))
-         (alias (format "%s - %s" filename title))
-         (id (org-id-get-create)))
-    (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias))
-    (message "Added ID with alias: %s" alias)))
-(defun my/insert-heading-link ()
-  "Pick an org file recursively, then link to a heading with org-id."
-  (interactive)
-  (let* ((current-buf (current-buffer))
-         (brain2-dir (expand-file-name "~/Documents/brain2/"))
-         (default-directory brain2-dir)
-         ;; Get all org files recursively
-         (org-files (directory-files-recursively brain2-dir "\\.org$"))
-         ;; Make paths relative for cleaner display
-         (file-choices (mapcar (lambda (f) (file-relative-name f brain2-dir)) org-files))
-         (file-rel (completing-read "Org file: " file-choices nil t))
-         (file (expand-file-name file-rel brain2-dir))
-         (filename (file-name-base file)))
-    (unless (file-exists-p file)
-      (user-error "File not found: %s" file))
-    ;; List headings in that file
-    (with-current-buffer (find-file-noselect file)
-      (let* ((headings (org-map-entries (lambda () (nth 4 (org-heading-components))) nil 'file))
-             (heading (completing-read "Heading: " headings)))
-        ;; Find the heading and get/create its ID
-        (goto-char (point-min))
-        (unless (search-forward heading nil t)
-          (user-error "Heading not found: %s" heading))
-        (org-back-to-heading t)
-        (let* ((id (org-id-get-create))
-               (alias (format "%s - %s" filename heading))
-               (link (format "[[id:%s][%s]]" id heading)))
-          ;; Ensure alias is set
-          (unless (org-entry-get nil "ROAM_ALIASES")
-            (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias)))
-          ;; Switch back to original buffer and insert link
-          (with-current-buffer current-buf
-            (insert link)
-            (message "Inserted link: %s" link)))))))
-(map! :leader
-      :desc "Promote heading to concept" "n P" #'my/org-roam-promote-heading-to-concept
-      :desc "Insert file link" "n f" #'my/insert-file-link
-      :desc "Add heading ID" "n i" #'my/add-heading-id
-      :desc "Insert heading link" "n h" #'my/insert-heading-link
-      :desc "Find/create node" "n n" #'org-roam-node-find
-      :desc "Insert node link" "n l" #'org-roam-node-insert
-      :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
-      :desc "Open graph UI" "n g" #'org-roam-ui-open
-      :desc "Capture new node" "n c" #'org-roam-capture)
+  (defun my/insert-file-link (path)
+    "Insert an org file link to PATH with basename as description."
+    (interactive "fFile: ")
+    (insert (format "[[file:%s][%s]]" (abbreviate-file-name path) (file-name-base path))))
+  (defun my/add-heading-id ()
+    "Add org-id UUID to heading with filename-heading alias for org-roam."
+    (interactive)
+    (org-back-to-heading t)
+    (let* ((filename (file-name-base (buffer-file-name)))
+           (title (nth 4 (org-heading-components)))
+           (alias (format "%s - %s" filename title))
+           (id (org-id-get-create)))
+      (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias))
+      (message "Added ID with alias: %s" alias)))
+  (defun my/insert-heading-link ()
+    "Pick an org file recursively, then link to a heading with org-id."
+    (interactive)
+    (let* ((current-buf (current-buffer))
+           (brain2-dir (expand-file-name "~/Documents/brain2/"))
+           (default-directory brain2-dir)
+           ;; Get all org files recursively
+           (org-files (directory-files-recursively brain2-dir "\\.org$"))
+           ;; Make paths relative for cleaner display
+           (file-choices (mapcar (lambda (f) (file-relative-name f brain2-dir)) org-files))
+           (file-rel (completing-read "Org file: " file-choices nil t))
+           (file (expand-file-name file-rel brain2-dir))
+           (filename (file-name-base file)))
+      (unless (file-exists-p file)
+        (user-error "File not found: %s" file))
+      ;; List headings in that file
+      (with-current-buffer (find-file-noselect file)
+        (let* ((headings (org-map-entries (lambda () (nth 4 (org-heading-components))) nil 'file))
+               (heading (completing-read "Heading: " headings)))
+          ;; Find the heading and get/create its ID
+          (goto-char (point-min))
+          (unless (search-forward heading nil t)
+            (user-error "Heading not found: %s" heading))
+          (org-back-to-heading t)
+          (let* ((id (org-id-get-create))
+                 (alias (format "%s - %s" filename heading))
+                 (link (format "[[id:%s][%s]]" id heading)))
+            ;; Ensure alias is set
+            (unless (org-entry-get nil "ROAM_ALIASES")
+              (org-set-property "ROAM_ALIASES" (format "\"%s\"" alias)))
+            ;; Switch back to original buffer and insert link
+            (with-current-buffer current-buf
+              (insert link)
+              (message "Inserted link: %s" link)))))))
+  (map! :leader
+        :desc "Promote heading to concept" "n P" #'my/org-roam-promote-heading-to-concept
+        :desc "Insert file link" "n f" #'my/insert-file-link
+        :desc "Add heading ID" "n i" #'my/add-heading-id
+        :desc "Insert heading link" "n h" #'my/insert-heading-link
+        :desc "Find/create node" "n n" #'org-roam-node-find
+        :desc "Insert node link" "n l" #'org-roam-node-insert
+        :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
+        :desc "Open graph UI" "n g" #'org-roam-ui-open
+        :desc "Capture new node" "n c" #'org-roam-capture)
 ;; Unbind evil-org-mode's M-H and M-L bindings
 (after! evil-org
   (map! :map evil-org-mode-map
@@ -469,7 +468,6 @@ It does NOT delete or replace the original heading."
         lsp-rust-analyzer-display-lifetime-elision-hints-enable "skip_trivial"
         lsp-rust-analyzer-display-parameter-hints t
         lsp-rust-analyzer-display-closure-return-type-hints t))
-
 (after! eglot
   ;; Set up environment for rust-analyzer
   (setenv "PATH" (concat (expand-file-name "~/.cargo/bin") ":" (getenv "PATH")))
@@ -497,6 +495,19 @@ It does NOT delete or replace the original heading."
     :temperature 1.0
     :include-reasoning t
     :use-context 'system))
+(use-package! gptel-agent
+  :after gptel
+  :commands (gptel-agent)
+  :config
+  ;; Initialize agent tools and capabilities
+  (gptel-agent-update))
+  
+  ;; Optional: Configure agent directories for custom sub-agents
+  ;; (add-to-list 'gptel-agent-dirs "~/path/to/custom/agents")
+;; Keybinding for gptel-agent (set globally, not in use-package)
+(map! :leader
+      :prefix "o"
+      :desc "GPTel Agent" "l c" #'gptel-agent)
 (use-package! presence
   :defer 5  ; Load 5 seconds after startup (lazy-load for performance)
   :commands (presence-mode)
@@ -691,10 +702,8 @@ It does NOT delete or replace the original heading."
         (display-line-numbers-mode 1)
         (when (derived-mode-p 'org-mode)
           (setq-local org-modern-hide-stars 'leading))))))
-;; Use custom emacs logo image as the dashboard banner with minimal menu.
-;; Set BEFORE doom-dashboard loads - use pre-scaled high-quality XPM
-(setq +doom-dashboard-banner-file "default.xpm"
-      +doom-dashboard-banner-dir (expand-file-name "~/.config/emacs/modules/ui/doom-dashboard/banners/"))
+;; Use custom Emacs logo as the dashboard banner (300x300, Lanczos smoothed)
+(setq +doom-dashboard-banner-file "emacs-logo-300-smooth.xpm")
 (setq +doom-dashboard-menu-sections
       '(("Open project"
          :icon (nerd-icons-sucicon "nf-custom-folder_git" :face 'doom-dashboard-menu-title :height 1.3)
