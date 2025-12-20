@@ -134,6 +134,9 @@ Example configuration (commented out):
 I use =ewal= to integrate pywal colors with Doom themes, allowing my Emacs theme
 to automatically match my wallpaper color scheme.
 #+begin_src emacs-lisp
+;; Set doom-theme early to force ewal-doom-one to load during init
+;; This prevents the flash of default theme on cold start
+(setq doom-theme 'ewal-doom-one)
 (use-package! ewal
   :init (setq ewal-use-built-in-always-p nil
               ewal-use-built-in-on-failure-p t
@@ -141,50 +144,74 @@ to automatically match my wallpaper color scheme.
 (use-package! ewal-doom-themes
   :after ewal
   :config (progn
-            ;; Load our ewal fix to correct color shading for light themes
-            (load-file (expand-file-name "~/.config/doom/ewal-fix.el"))
+            ;; Load our ewal fix - prefer compiled version for speed
+            (let ((compiled-file (expand-file-name "~/.config/doom/ewal-fix.elc"))
+                  (source-file (expand-file-name "~/.config/doom/ewal-fix.el")))
+              (if (and (file-exists-p compiled-file)
+                       (file-newer-than-file-p compiled-file source-file))
+                  (load compiled-file)
+                (load source-file)))
             (load-theme 'ewal-doom-one t)
             (enable-theme 'ewal-doom-one)))
 #+end_src
 Helper functions for smart theme loading - detects doom presets vs wallpaper themes:
 #+begin_src emacs-lisp
-(defun my/detect-preset-theme ()
+(defvar my/preset-theme-cache nil
+  "Cache for preset theme detection to avoid repeated JSON parsing.")
+(defun my/detect-preset-theme (&optional force-refresh)
   "Detect which preset theme is currently active from pywal cache.
 Returns (TYPE . NAME) where TYPE is 'doom or 'other, and NAME is the theme name.
 For doom themes: NAME is like 'gruvbox-light' (without 'doom-' prefix).
 For other themes: NAME is the full theme symbol like 'kuronami or 'wombat.
-Returns nil if not a preset theme (wallpaper-based)."
+Returns nil if not a preset theme (wallpaper-based).
+Uses caching for performance - pass FORCE-REFRESH to bypass cache."
   (let* ((cache-file (expand-file-name "~/.cache/wal/colors.json"))
-         (preset-dir (expand-file-name "~/.config/wal/colorschemes/dark/"))
-         (json-object-type 'alist)
-         (json-array-type 'list))
+         (preset-dir (expand-file-name "~/.config/wal/colorschemes/dark/")))
     (when (file-exists-p cache-file)
-      (let* ((current-colors (json-read-file cache-file))
-             (current-bg (alist-get 'background (alist-get 'special current-colors)))
-             (current-fg (alist-get 'foreground (alist-get 'special current-colors)))
-             (current-c0 (alist-get 'color0 (alist-get 'colors current-colors))))
+      ;; Check cache validity
+      (if (and my/preset-theme-cache
+               (not force-refresh)
+               (equal (nth 5 (file-attributes cache-file))
+                      (car my/preset-theme-cache)))
+          ;; Return cached result
+          (cdr my/preset-theme-cache)
         
-        ;; Check all preset files for a match
-        (catch 'found
-          (dolist (file (directory-files preset-dir nil "\\.json$"))
-            (let* ((preset-path (expand-file-name file preset-dir))
-                   (preset-colors (json-read-file preset-path))
-                   (preset-bg (alist-get 'background (alist-get 'special preset-colors)))
-                   (preset-fg (alist-get 'foreground (alist-get 'special preset-colors)))
-                   (preset-c0 (alist-get 'color0 (alist-get 'colors preset-colors))))
-              
-              ;; Match if bg, fg, and color0 all match
-              (when (and (string= current-bg preset-bg)
-                        (string= current-fg preset-fg)
-                        (string= current-c0 preset-c0))
-                ;; Check if it's a doom theme or other theme
-                (if (string-match "^doom-\\(.*\\)\\.json$" file)
-                    ;; Doom theme: return ('doom . "gruvbox-light")
-                    (throw 'found (cons 'doom (match-string 1 file)))
-                  ;; Other theme: return ('other . 'kuronami)
-                  (throw 'found (cons 'other 
-                                     (intern (replace-regexp-in-string "\\.json$" "" file))))))))
-          nil)))))
+        ;; Cache miss or expired - recompute
+        (let* ((json-object-type 'alist)
+               (json-array-type 'list)
+               (current-colors (json-read-file cache-file))
+               (current-bg (alist-get 'background (alist-get 'special current-colors)))
+               (current-fg (alist-get 'foreground (alist-get 'special current-colors)))
+               (current-c0 (alist-get 'color0 (alist-get 'colors current-colors)))
+               (result nil))
+          
+          ;; Check all preset files for a match
+          (catch 'found
+            (dolist (file (directory-files preset-dir nil "\\.json$"))
+              (let* ((preset-path (expand-file-name file preset-dir))
+                     (preset-colors (json-read-file preset-path))
+                     (preset-bg (alist-get 'background (alist-get 'special preset-colors)))
+                     (preset-fg (alist-get 'foreground (alist-get 'special preset-colors)))
+                     (preset-c0 (alist-get 'color0 (alist-get 'colors preset-colors))))
+                
+                ;; Match if bg, fg, and color0 all match
+                (when (and (string= current-bg preset-bg)
+                          (string= current-fg preset-fg)
+                          (string= current-c0 preset-c0))
+                  ;; Check if it's a doom theme or other theme
+                  (setq result
+                        (if (string-match "^doom-\\(.*\\)\\.json$" file)
+                            ;; Doom theme: return ('doom . "gruvbox-light")
+                            (cons 'doom (match-string 1 file))
+                          ;; Other theme: return ('other . 'kuronami)
+                          (cons 'other 
+                                (intern (replace-regexp-in-string "\\.json$" "" file)))))
+                  (throw 'found result)))))
+          
+          ;; Update cache with file timestamp and result
+          (setq my/preset-theme-cache 
+                (cons (nth 5 (file-attributes cache-file)) result))
+          result)))))
 (defun reload-pywal-theme ()
   "Reload theme - use original doom theme if preset, else use ewal."
   (interactive)
@@ -209,7 +236,8 @@ Returns nil if not a preset theme (wallpaper-based)."
           (message "Pywal theme reloaded (wallpaper-based)"))
       
       ;; No wallpaper or "None" = preset theme: try to load original theme
-      (let* ((preset-info (my/detect-preset-theme))
+      ;; Force refresh cache since pywal colors just changed
+      (let* ((preset-info (my/detect-preset-theme t))
              (preset-type (car preset-info))
              (preset-name (cdr preset-info)))
         (cond
@@ -308,7 +336,13 @@ Load the theme-to-pywal script for converting Emacs themes to pywal JSON presets
 This provides commands like =M-x theme-to-pywal-generate-melpa-theme= for converting
 newly installed themes.
 #+begin_src emacs-lisp
-(load-file (expand-file-name "~/.config/doom/theme-to-pywal.el"))
+;; Autoload theme conversion commands without loading the whole file
+(autoload 'theme-to-pywal-generate-melpa-theme 
+  (expand-file-name "~/.config/doom/theme-to-pywal.el")
+  "Convert an installed Emacs theme to pywal JSON format." t)
+(autoload 'theme-to-pywal-batch-generate-doom-themes
+  (expand-file-name "~/.config/doom/theme-to-pywal.el")
+  "Batch convert all Doom themes to pywal JSON presets." t)
 #+end_src
 
 * Org-Roam Configuration

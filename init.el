@@ -14,6 +14,10 @@
 ;;      Alternatively, press 'gd' (or 'C-c c d') on a module to browse its
 ;;      directory (for easy access to its source code).
 
+;; Set doom-theme to force ewal-doom-one to load during init (not lazily)
+;; This ensures pywal colors are applied on cold start, not just in daemon mode
+(setq doom-theme 'ewal-doom-one)
+
 (doom! :input
        ;;bidi              ; (tfel ot) thgir etirw uoy gnipleh
        ;;chinese
