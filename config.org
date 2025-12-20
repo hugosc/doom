@@ -863,39 +863,161 @@ Lazy-loaded to avoid startup overhead.
 
 * Org Agenda
 
-Configure org-agenda to search the entire brain2 directory for TODOs and scheduled items.
+Single-page agenda overview tuned to my `inbox.org` workflow.
 #+begin_src emacs-lisp
 (setq org-agenda-start-with-log-mode t)
-(after! org
+
+(after! org-agenda
   (setq org-agenda-files '("~/Documents/brain2/")
         org-log-done 'time
-        org-hide-emphasis-markers t)
+        org-hide-emphasis-markers t
+        org-agenda-compact-blocks t
+        org-agenda-block-separator ?─)
+  
+  ;; Use nerd-icons for priority symbols if you want (commented out by default)
+  ;; (setq org-priority-highest ?A
+  ;;       org-priority-lowest ?C
+  ;;       org-priority-default ?B)
+
+  ;; Force evil state in agenda
+  (set-evil-initial-state! 'org-agenda-mode 'normal)
+
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
-  (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t))))
-  ;; Config for custom agenda view
-(setq org-agenda-custom-commands
- '(("p" "Planning"
-             ((tags-todo "+@planning"
-                         ((org-agenda-overriding-header "Planning Tasks")))
-              (tags-todo "-{.*}"
-                         ((org-agenda-overriding-header "Untagged Tasks")))
-              (todo ".*" ((org-agenda-files '("~/Documents/brain2/inbox.org"))
-                          (org-agenda-overriding-header "Unprocessed Inbox Items")))))
-        ("d" "Daily Agenda"
-         ((agenda "" ((org-agenda-span 'day)
-                      (org-deadline-warning-days 7)))
-          (tags-todo "+PRIORITY=\"A\""
-                     ((org-agenda-overriding-header "High Priority Tasks")))))
-        ("w" "Weekly Review"
-         ((agenda ""
-                  ((org-agenda-overriding-header "Completed Tasks")
-                   (org-agenda-skip-function '(org-agenda-skip-entry-if 'nottodo 'done))
-                   (org-agenda-span 'week)))
-          (agenda ""
-                  ((org-agenda-overriding-header "Unfinished Scheduled Tasks")
-                   (org-agenda-skip-function '(org-agenda-skip-entry-if 'todo 'done))
-                   (org-agenda-span 'week))))))
-      )
+  (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t)))
+  
+  ;; Custom agenda commands
+  (setq org-agenda-custom-commands
+        '(("o" "Overview"
+           alltodo "" 
+           ((org-agenda-overriding-header "Active Tasks")
+            (org-agenda-skip-function
+             (lambda ()
+               (let ((file (buffer-file-name)))
+                 ;; Skip items in Archive section
+                 (when (save-excursion
+                         (org-back-to-heading t)
+                         (let ((path (org-get-outline-path)))
+                           (member "Archive" path)))
+                   (org-end-of-subtree t)))))
+            (org-super-agenda-groups
+             '((:name "Overdue" :deadline past :order 1)
+               (:name "Today" :scheduled today :deadline today :order 2)
+               (:name "This Week" :scheduled (next 7 days) :deadline (next 7 days) :order 3)
+               (:name "High Priority (A)" :priority "A" :order 4)
+               (:name "Medium Priority (B)" :priority "B" :order 5)
+               (:name "Projects" :todo "PROJ" :order 6)
+               (:name "Recurring" :todo "LOOP" :order 7)
+               (:name "Unscheduled TODOs" :todo "TODO" :order 8)
+               (:discard (:todo ("DONE" "KILL")))))))
+          ("t" "Today"
+           agenda ""
+           ((org-agenda-span 'day)
+            (org-deadline-warning-days 0)
+            (org-agenda-start-with-log-mode nil)
+            (org-super-agenda-groups
+             '((:name "Scheduled Today" :scheduled today :order 1)
+               (:name "Due Today" :deadline today :order 2)
+               (:name "Overdue" :deadline past :order 3)))))
+          ("w" "This Week"
+           agenda ""
+           ((org-agenda-span 7)
+            (org-deadline-warning-days 0)
+            (org-agenda-start-with-log-mode nil)
+            (org-super-agenda-groups
+             '((:name "Overdue" :deadline past :order 1)
+               (:name "Today" :scheduled today :deadline today :order 2)
+               (:name "This Week" :scheduled (next 7 days) :deadline (next 7 days) :order 3))))))))
+
+(use-package! org-super-agenda
+  :after org-agenda
+  :config
+  (setq org-super-agenda-header-prefix "  "
+        org-super-agenda-header-separator "")
+  (org-super-agenda-mode 1))
+
+(defun my/org-agenda-skip-unless-top-level (top-level-heading)
+  "Skip entry unless it is under TOP-LEVEL-HEADING." 
+  (let ((path (ignore-errors (org-get-outline-path t t))))
+    (unless (and (consp path) (string= (car path) top-level-heading))
+      (or (outline-next-heading) (point-max)))))
+#+end_src
+
+* Org-Pomodoro Configuration
+
+Configure org-pomodoro for the Pomodoro technique with manual break support.
+The manual-break feature allows you to work a few minutes "overtime" to finish a task
+before manually triggering the break by calling ~org-pomodoro~ again.
+
+Notifications are sent via dunst (libnotify): one when entering overtime, one when break finishes.
+#+begin_src emacs-lisp
+;; Ensure DBUS session bus is set for notifications to work
+(unless (getenv "DBUS_SESSION_BUS_ADDRESS")
+  (let ((dbus-addr (format "unix:path=/run/user/%d/bus" (user-uid))))
+    (when (file-exists-p (substring dbus-addr 10))
+      (setenv "DBUS_SESSION_BUS_ADDRESS" dbus-addr))))
+
+(use-package! alert
+  :config
+  ;; Configure alert to use libnotify (dunst) for org-pomodoro notifications
+  (setq alert-default-style 'libnotify))
+
+(use-package! org-pomodoro
+  :after org
+  :config
+  ;; Enable manual break workflow: break won't auto-start, you control when it begins
+  (setq org-pomodoro-manual-break t
+        
+        ;; Disable all sounds - use notifications only
+        org-pomodoro-play-sounds nil
+        org-pomodoro-start-sound-p nil
+        org-pomodoro-finished-sound-p nil
+        org-pomodoro-overtime-sound-p nil
+        org-pomodoro-short-break-sound-p nil
+        org-pomodoro-long-break-sound-p nil
+        org-pomodoro-ticking-sound-p nil
+        
+        ;; Only clock work time, not breaks
+        org-pomodoro-clock-break nil
+        
+        ;; Pomodoro and break durations (customize as needed)
+        org-pomodoro-length 25
+        org-pomodoro-short-break-length 5
+        org-pomodoro-long-break-length 20
+        org-pomodoro-long-break-frequency 4)
+  
+  ;; Override org-pomodoro-notify to disable built-in notifications
+  ;; (we handle notifications via hooks instead)
+  (defun org-pomodoro-notify (title message)
+    "Disabled - we use custom hooks for notifications instead."
+    nil)
+  
+  ;; Notification when entering overtime
+  (defun my/org-pomodoro-overtime-notify ()
+    "Send notification when overtime starts."
+    (alert "Finished, overtime started" :title "Pomodoro" :category 'org-pomodoro))
+  
+  ;; Notification when breaks finish
+  (defun my/org-pomodoro-short-break-finished-notify ()
+    "Send notification when short break finishes."
+    (alert "Short break finished" :title "Pomodoro" :category 'org-pomodoro))
+  
+  (defun my/org-pomodoro-long-break-finished-notify ()
+    "Send notification when long break finishes."
+    (alert "Long break finished" :title "Pomodoro" :category 'org-pomodoro))
+  
+  ;; Hook notifications into org-pomodoro events (only specific hooks to avoid duplicates)
+  (add-hook 'org-pomodoro-overtime-hook
+    (lambda () (my/org-pomodoro-overtime-notify)))
+  
+  (add-hook 'org-pomodoro-short-break-finished-hook
+    (lambda () (my/org-pomodoro-short-break-finished-notify)))
+  
+  (add-hook 'org-pomodoro-long-break-finished-hook
+    (lambda () (my/org-pomodoro-long-break-finished-notify)))
+  
+  ;; Keybinding for quick pomodoro access
+  (map! :leader
+        :desc "Start/stop pomodoro" "o p" #'org-pomodoro))
 #+end_src
 
 * Org Formatting
