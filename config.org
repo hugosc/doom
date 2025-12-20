@@ -277,9 +277,18 @@ Uses caching for performance - pass FORCE-REFRESH to bypass cache."
 
 Unified transparency system that syncs across kitty, st, and emacs.
 Uses Super+Shift+P (via DWM) to toggle all windows simultaneously.
-State is persisted in /tmp/transparency-state for new windows.
+State is persisted in ~/.cache/transparency-state and copied to /tmp on startup.
 #+begin_src emacs-lisp
-;; Read transparency state from file
+;; Initialize transparency state (fast, runs synchronously on startup)
+(let ((temp-state "/tmp/transparency-state")
+      (persistent-state (expand-file-name "~/.cache/transparency-state")))
+  ;; If temp state doesn't exist, restore from persistent or create default
+  (unless (file-exists-p temp-state)
+    (if (file-exists-p persistent-state)
+        (copy-file persistent-state temp-state t)
+      (with-temp-file temp-state (insert "transparent"))
+      (with-temp-file persistent-state (insert "transparent")))))
+;; Read transparency state from file (inline for speed)
 (defun get-transparency-state ()
   "Read current transparency state from /tmp/transparency-state."
   (if (file-exists-p "/tmp/transparency-state")
@@ -298,7 +307,7 @@ State is persisted in /tmp/transparency-state for new windows.
   ;; Just call the system-wide toggle script which handles everything
   (start-process-shell-command 
    "toggle-transparency" nil "toggle-transparency"))
-;; Watch for transparency state changes from external toggles
+;; Watch for transparency state changes from external toggles (async, no startup impact)
 (when (functionp 'file-notify-add-watch)
   (let ((state-file "/tmp/transparency-state"))
     (file-notify-add-watch state-file '(change)
@@ -332,7 +341,7 @@ Debounced to prevent duplicate reloads when multiple hooks trigger."
 
 ** Theme Conversion Tools
 
-Load the theme-to-pywal script for converting Emacs themes to pywal JSON presets.
+Load the theme-to-pywal script only when needed (lazy-load for faster startup).
 This provides commands like =M-x theme-to-pywal-generate-melpa-theme= for converting
 newly installed themes.
 #+begin_src emacs-lisp
