@@ -1,9 +1,7 @@
 #+TITLE: Doom Emacs Configuration
 #+AUTHOR: Crocodile
 #+PROPERTY: header-args :tangle yes :cache yes :results silent :padline no
-
-* Table of Contents :TOC:
-
+r Table of Contents :TOC:
 - [[#introduction][Introduction]]
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
@@ -42,7 +40,6 @@
 - [[#dashboard-customization][Dashboard Customization]]
 - [[#vterm-configuration][Vterm Configuration]]
 - [[#circe-irc-configuration][Circe IRC Configuration]]
-
 * Introduction
 
 This is my Doom Emacs configuration, written in a literate style using org-mode.
@@ -828,7 +825,6 @@ Real-time code completion using GitHub Copilot.
       (corfu-next))
      (t
       (insert "\t"))))
-
   (after! evil
     (evil-define-key 'insert 'global (kbd "<tab>") #'my/copilot-tab-or-default)
     (evil-define-key 'insert 'global (kbd "TAB") #'my/copilot-tab-or-default)))
@@ -937,7 +933,6 @@ Lazy-loaded to avoid startup overhead.
 Single-page agenda overview tuned to my `inbox.org` workflow.
 #+begin_src emacs-lisp
 (setq org-agenda-start-with-log-mode t)
-
 (after! org-agenda
   (setq org-agenda-files '("~/Documents/brain2/")
         org-log-done 'time
@@ -949,17 +944,16 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
   ;; (setq org-priority-highest ?A
   ;;       org-priority-lowest ?C
   ;;       org-priority-default ?B)
-
-  ;; Force evil state in agenda
-  (set-evil-initial-state! 'org-agenda-mode 'normal)
-
+  ;; Use Doom's default Evil behavior in Agenda (motion state).
+  ;; `evil-org-agenda` defines most of Doom's agenda-friendly bindings in
+  ;; motion state; forcing `normal` makes keys like `q` fall back to Evil's
+  ;; macro recording.
+  (set-evil-initial-state! 'org-agenda-mode 'motion)
   ;; Some agenda views (e.g. `alltodo`, often used for overview dashboards)
-  ;; don't reliably get Doom's `evil-org-agenda` navigation keys, so `j/k`
-  ;; can fall back to Org's default bindings (like `org-agenda-goto-date`).
-  ;; Bind `j/k` at the base agenda keymap level to keep navigation consistent.
+  ;; can end up using Org's default `org-agenda-mode-map` bindings.
+  ;; Ensure `j/k` always move by line (Doom-style).
   (define-key org-agenda-mode-map (kbd "j") #'org-agenda-next-line)
   (define-key org-agenda-mode-map (kbd "k") #'org-agenda-previous-line)
-
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t)))
   
@@ -980,12 +974,25 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
             (org-super-agenda-groups
              '((:name "Overdue" :deadline past :order 1)
                (:name "Today" :scheduled today :deadline today :order 2)
-               (:name "This Week" :scheduled (next 7 days) :deadline (next 7 days) :order 3)
+               (:name "This Week"
+                :pred (lambda (item)
+                        (org-super-agenda--when-with-marker-buffer (org-super-agenda--get-marker item)
+                          (let ((sched (org-entry-get (point) "SCHEDULED"))
+                                (dead (org-entry-get (point) "DEADLINE")))
+                            (or (and sched
+                                     (let ((sched-abs (org-time-string-to-absolute sched)))
+                                       (and (> sched-abs (org-today))
+                                            (< sched-abs (+ (org-today) 7)))))
+                                (and dead
+                                     (let ((dead-abs (org-time-string-to-absolute dead)))
+                                       (and (> dead-abs (org-today))
+                                            (< dead-abs (+ (org-today) 7)))))))))
+                :order 3)
                (:name "High Priority (A)" :priority "A" :order 4)
                (:name "Medium Priority (B)" :priority "B" :order 5)
                (:name "Projects" :todo "PROJ" :order 6)
                (:name "Recurring" :todo "LOOP" :order 7)
-               (:name "Unscheduled TODOs" :todo "TODO" :order 8)
+               (:name "Unscheduled TODOs" :and (:todo "TODO" :not (:scheduled t :deadline t)) :order 8)
                (:discard (:todo ("DONE" "KILL")))))))
           ("t" "Today"
            agenda ""
@@ -1005,7 +1012,6 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
              '((:name "Overdue" :deadline past :order 1)
                (:name "Today" :scheduled today :deadline today :order 2)
                (:name "This Week" :scheduled (next 7 days) :deadline (next 7 days) :order 3))))))))
-
 (use-package! org-super-agenda
   :after org-agenda
   :config
@@ -1016,7 +1022,6 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
         org-super-agenda-header-prefix "  "
         org-super-agenda-header-separator "")
   (org-super-agenda-mode 1))
-
 (defun my/org-agenda-skip-unless-top-level (top-level-heading)
   "Skip entry unless it is under TOP-LEVEL-HEADING." 
   (let ((path (ignore-errors (org-get-outline-path t t))))
@@ -1029,7 +1034,6 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
 Configure org-pomodoro for the Pomodoro technique with manual break support.
 The manual-break feature allows you to work a few minutes "overtime" to finish a task
 before manually triggering the break by calling ~org-pomodoro~ again.
-
 Notifications are sent via dunst (libnotify): one when entering overtime, one when break finishes.
 #+begin_src emacs-lisp
 ;; Ensure DBUS session bus is set for notifications to work
@@ -1037,12 +1041,10 @@ Notifications are sent via dunst (libnotify): one when entering overtime, one wh
   (let ((dbus-addr (format "unix:path=/run/user/%d/bus" (user-uid))))
     (when (file-exists-p (substring dbus-addr 10))
       (setenv "DBUS_SESSION_BUS_ADDRESS" dbus-addr))))
-
 (use-package! alert
   :config
   ;; Configure alert to use libnotify (dunst) for org-pomodoro notifications
   (setq alert-default-style 'libnotify))
-
 (use-package! org-pomodoro
   :after org
   :config
