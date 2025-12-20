@@ -17,6 +17,7 @@
   - [[#theme-pywal-integration][Theme: Pywal Integration]]
   - [[#transparency-toggle-and-pywal-auto-reload][Transparency Toggle and Pywal Auto-Reload]]
   - [[#theme-conversion-tools][Theme Conversion Tools]]
+  - [[#dashboard-banner][Dashboard Banner]]
 - [[#org-roam-configuration][Org-Roam Configuration]]
   - [[#org-roam-ui][Org-Roam UI]]
   - [[#capture-templates][Capture Templates]]
@@ -353,6 +354,12 @@ newly installed themes.
   (expand-file-name "~/.config/doom/theme-to-pywal.el")
   "Batch convert all Doom themes to pywal JSON presets." t)
 #+end_src
+
+** Dashboard Banner
+
+Banner setting is configured in the Dashboard Customization section (line ~1048)
+to ensure it loads after the theme but before the dashboard is displayed.
+This prevents blank flashes on startup while still using the custom XPM logo.
 
 * Org-Roam Configuration
 
@@ -1047,14 +1054,15 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
 * Dashboard Customization
 
 #+begin_src emacs-lisp
-;; Use custom Emacs logo as the dashboard banner (300x300, Lanczos smoothed)
+;; Use custom Emacs logo as dashboard banner (300x300 Lanczos-smoothed)
 (setq +doom-dashboard-banner-file "emacs-logo-300-smooth.xpm")
+;; Dashboard menu sections
 (setq +doom-dashboard-menu-sections
       '(("Open project"
-         :icon (nerd-icons-sucicon "nf-custom-folder_git" :face 'doom-dashboard-menu-title :height 1.3)
+         :icon (nerd-icons-octicon "nf-oct-repo" :face 'doom-dashboard-menu-title :height 1.3)
          :action projectile-switch-project)
         ("Open documentation"
-         :icon (nerd-icons-faicon "nf-fa-book_skull" :face 'doom-dashboard-menu-title :height 1.3)
+         :icon (nerd-icons-faicon "nf-fa-book" :face 'doom-dashboard-menu-title :height 1.3)
          :action doom/help)))
 (after! doom-dashboard
   ;; Adjust banner padding for better vertical centering
