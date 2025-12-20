@@ -35,6 +35,7 @@
   - [[#gptel-agent][GPTel Agent]]
 - [[#discord-presence][Discord Presence]]
 - [[#org-agenda][Org Agenda]]
+- [[#org-pomodoro-configuration][Org-Pomodoro Configuration]]
 - [[#org-formatting][Org Formatting]]
 - [[#org-inline-images][Org Inline Images]]
 - [[#zen-mode-customization][Zen Mode Customization]]
