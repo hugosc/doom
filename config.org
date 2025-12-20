@@ -63,17 +63,14 @@ Set the general org-directory for agenda and other org features.
 
 ** Emacs Server
 
-Start the emacs server to allow emacsclient connections (required for daemon mode and pywal hooks).
+Start the emacs server to allow emacsclient connections (required for pywal hooks).
+When running in daemon mode, server is already started automatically.
 #+begin_src emacs-lisp
-(require 'server)
-(unless (server-running-p)
-  (server-start))
-;; Also ensure server starts if running in daemon mode
-(when (daemonp)
-  (add-hook 'after-make-frame-functions
-    (lambda (frame)
-      (when (not (server-running-p))
-        (server-start)))))
+;; Only start server if NOT already in daemon mode
+(unless (daemonp)
+  (require 'server)
+  (unless (server-running-p)
+    (server-start)))
 #+end_src
 
 ** Auto-revert Mode
@@ -109,9 +106,8 @@ Optimize Emacs for better responsiveness and lower resource usage.
 (setq gc-cons-threshold 100000000)  ; 100 MB (default is 800KB)
 ;; Increase amount of data Emacs reads from processes (better for LSP)
 (setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
-;; Less aggressive auto-revert checks
-(setq auto-revert-interval 20)       ; Check every 20s (default is 5s)
-(setq auto-revert-check-vc-info nil) ; Don't check VC info (faster)
+;; Don't check VC info during auto-revert (much faster)
+(setq auto-revert-check-vc-info nil)
 #+end_src
 
 * Visual Configuration
@@ -709,8 +705,8 @@ Launch yazi file manager in external terminal with Emacs integration.
 #+begin_src emacs-lisp
 (use-package! eee
   :config
-  ;; Use kitty terminal for yazi and other TUI tools
-  (setq ee-terminal-command "kitty")
+  ;; Use suckless terminal for yazi and other TUI tools
+  (setq ee-terminal-command "st")
   
   ;; Keybindings for yazi and other TUI tools
   (map! :leader
