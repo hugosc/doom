@@ -756,12 +756,82 @@ Configure rust-analyzer to use the correct sysroot from rustup.
   (setenv "PATH" (concat (expand-file-name "~/.cargo/bin") ":" (getenv "PATH")))
   (setenv "RUSTUP_TOOLCHAIN" "stable-x86_64-unknown-linux-gnu")
   
+  ;; Suppress EGLOT sentinel warnings for unresponsive servers
+  ;; These warnings are harmless but noisy - we let EGLOT handle cleanup silently
+  (setq eglot-extend-to-xref nil)
+  (advice-add 'eglot--warn :around
+    (lambda (orig-func &rest args)
+      ;; Silence sentinel warnings about unresponsive servers
+      (unless (and (> (length args) 0)
+                   (stringp (car args))
+                   (string-match "Sentinel for EGLOT.*still hasn't run" (car args)))
+        (apply orig-func args))))
+  
   (add-to-list 'eglot-server-programs
     '((rust-ts-mode rust-mode) .
       ("rust-analyzer" :initializationOptions
        (:checkOnSave t
         :procMacro (:enable t)
         :cargo (:buildScripts (:enable t)))))))
+#+end_src
+
+* AI Integration: Copilot
+
+Real-time code completion using GitHub Copilot.
+#+begin_src emacs-lisp
+(use-package! copilot
+  :hook (prog-mode . copilot-mode)
+  :bind (:map copilot-completion-map
+              ("<tab>" . 'copilot-accept-completion)
+              ("TAB" . 'copilot-accept-completion)
+              ("C-TAB" . 'copilot-accept-completion-by-word)
+              ("C-<tab>" . 'copilot-accept-completion-by-word)
+              ("M-f" . 'copilot-accept-completion-by-word)
+              ("M-n" . 'copilot-next-completion)
+              ("M-p" . 'copilot-previous-completion))
+  :config
+  (setq copilot-indent-offset-alist '((prog-mode . 2)
+                                      (org-mode . 2)
+                                      (emacs-lisp-mode . 2)
+                                      (python-mode . 4)
+                                      (rust-mode . 4)))
+  
+  ;; Silence copilot indentation warning for non-programming modes
+  (defun copilot--infer-indentation-offset ()
+    "Infer indentation offset, silently return nil if no standard indent found."
+    (let ((indent-size
+           (or (and (eq major-mode 'python-mode) 4)
+               (and (eq major-mode 'rust-mode) 4)
+               (and (eq major-mode 'go-mode) 8)
+               (and (eq major-mode 'c++-mode) 2)
+               (and (eq major-mode 'c-mode) 2)
+               (and (eq major-mode 'java-mode) 4)
+               (and (eq major-mode 'js-mode) 2)
+               (and (eq major-mode 'typescript-mode) 2)
+               (and (eq major-mode 'emacs-lisp-mode) 2)
+               (and (eq major-mode 'lisp-mode) 2)
+               (and (eq major-mode 'scheme-mode) 2)
+               (and (eq major-mode 'clojure-mode) 2)
+               (and (eq major-mode 'ruby-mode) 2)
+               2))) ; Default to 2 without warning
+      indent-size))
+  
+  ;; Custom TAB handler for Evil insert state
+  (defun my/copilot-tab-or-default ()
+    (interactive)
+    (cond
+     ((and (bound-and-true-p copilot-mode)
+           (copilot--overlay-visible-p))
+      (copilot-accept-completion))
+     ((and (featurep 'corfu)
+           corfu--visible)
+      (corfu-next))
+     (t
+      (insert "\t"))))
+
+  (after! evil
+    (evil-define-key 'insert 'global (kbd "<tab>") #'my/copilot-tab-or-default)
+    (evil-define-key 'insert 'global (kbd "TAB") #'my/copilot-tab-or-default)))
 #+end_src
 
 * AI Integration: GPTel

@@ -75,3 +75,10 @@
 
 ;; GPTel Agent - AI agent mode for GPTel
 (package! gptel-agent)
+
+;; Better agenda grouping
+(package! org-super-agenda)
+
+;; AI Integration: Copilot
+(package! copilot
+  :recipe (:host github :repo "copilot-emacs/copilot.el" :files ("*.el")))
