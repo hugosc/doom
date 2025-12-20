@@ -953,6 +953,13 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
   ;; Force evil state in agenda
   (set-evil-initial-state! 'org-agenda-mode 'normal)
 
+  ;; Some agenda views (e.g. `alltodo`, often used for overview dashboards)
+  ;; don't reliably get Doom's `evil-org-agenda` navigation keys, so `j/k`
+  ;; can fall back to Org's default bindings (like `org-agenda-goto-date`).
+  ;; Bind `j/k` at the base agenda keymap level to keep navigation consistent.
+  (define-key org-agenda-mode-map (kbd "j") #'org-agenda-next-line)
+  (define-key org-agenda-mode-map (kbd "k") #'org-agenda-previous-line)
+
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t)))
   
@@ -1002,7 +1009,11 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
 (use-package! org-super-agenda
   :after org-agenda
   :config
-  (setq org-super-agenda-header-prefix "  "
+  ;; `org-super-agenda` applies a separate keymap to group headers.
+  ;; Ensure it stays in sync with the agenda buffer's map so `j/k`
+  ;; behave the same on headers and items.
+  (setq org-super-agenda-header-map org-agenda-mode-map
+        org-super-agenda-header-prefix "  "
         org-super-agenda-header-separator "")
   (org-super-agenda-mode 1))
 
