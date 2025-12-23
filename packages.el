@@ -82,3 +82,6 @@
 ;; AI Integration: Copilot
 (package! copilot
   :recipe (:host github :repo "copilot-emacs/copilot.el" :files ("*.el")))
+
+;; Google Calendar integration (calfw already included with Doom's calendar module)
+(package! org-gcal)

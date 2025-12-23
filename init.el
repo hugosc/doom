@@ -39,7 +39,7 @@
        ;;doom-quit         ; DOOM quit-message prompts when you quit Emacs
        emoji +unicode    ; 🙂
        hl-todo           ; highlight TODO/FIXME/NOTE/DEPRECATED/HACK/REVIEW
-       ;;indent-guides     ; highlighted indent columns
+       indent-guides     ; highlighted indent columns
        ligatures         ; ligatures and symbols to make your code pretty again
        minimap           ; DISABLED - heavy CPU/memory overhead
        modeline          ; snazzy, Atom-inspired modeline, plus API
@@ -76,7 +76,7 @@
        (dired +icons)    ; making dired pretty [functional]
        electric          ; smarter, keyword-based electric-indent
        ;;eww               ; the internet is gross
-       ;;ibuffer           ; interactive buffer management
+       ibuffer           ; interactive buffer management
        tramp             ; remote files at your arthritic fingertips
        undo              ; persistent, smarter undo for your inevitable mistakes
        vc                ; version-control and Emacs, sitting in a tree
@@ -191,7 +191,7 @@
        ;;(wanderlust +gmail)
 
        :app
-       ;;calendar
+       calendar
        ;;emms
        ;;everywhere        ; *leave* Emacs!? You must be joking
        irc               ; how neckbeards socialize
