@@ -1,7 +1,9 @@
 #+TITLE: Doom Emacs Configuration
 #+AUTHOR: Crocodile
 #+PROPERTY: header-args :tangle yes :cache yes :results silent :padline no
-r Table of Contents :TOC:
+
+* Table of Contents :TOC:
+
 - [[#introduction][Introduction]]
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
@@ -9,13 +11,13 @@ r Table of Contents :TOC:
   - [[#auto-revert-mode][Auto-revert Mode]]
   - [[#user-information][User Information]]
   - [[#line-numbers][Line Numbers]]
+  - [[#browser-configuration][Browser Configuration]]
   - [[#performance-tuning][Performance Tuning]]
 - [[#visual-configuration][Visual Configuration]]
   - [[#fonts][Fonts]]
   - [[#theme-pywal-integration][Theme: Pywal Integration]]
   - [[#transparency-toggle-and-pywal-auto-reload][Transparency Toggle and Pywal Auto-Reload]]
   - [[#theme-conversion-tools][Theme Conversion Tools]]
-  - [[#dashboard-banner][Dashboard Banner]]
 - [[#org-roam-configuration][Org-Roam Configuration]]
   - [[#org-roam-ui][Org-Roam UI]]
   - [[#capture-templates][Capture Templates]]
@@ -29,10 +31,17 @@ r Table of Contents :TOC:
   - [[#yazi-integration-eeeel][Yazi Integration (eee.el)]]
   - [[#dired-configuration][Dired Configuration]]
 - [[#rust-configuration][Rust Configuration]]
+- [[#ai-integration-copilot][AI Integration: Copilot]]
 - [[#ai-integration-gptel][AI Integration: GPTel]]
   - [[#gptel-agent][GPTel Agent]]
 - [[#discord-presence][Discord Presence]]
+- [[#org-todo][Org-Todo]]
 - [[#org-agenda][Org Agenda]]
+- [[#google-calendar-integration][Google Calendar Integration]]
+  - [[#setup-instructions][Setup Instructions]]
+  - [[#configuration][Configuration]]
+  - [[#calfw-theme-integration][Calfw Theme Integration]]
+  - [[#usage][Usage]]
 - [[#org-pomodoro-configuration][Org-Pomodoro Configuration]]
 - [[#org-formatting][Org Formatting]]
 - [[#org-inline-images][Org Inline Images]]
@@ -40,6 +49,7 @@ r Table of Contents :TOC:
 - [[#dashboard-customization][Dashboard Customization]]
 - [[#vterm-configuration][Vterm Configuration]]
 - [[#circe-irc-configuration][Circe IRC Configuration]]
+
 * Introduction
 
 This is my Doom Emacs configuration, written in a literate style using org-mode.
@@ -71,6 +81,33 @@ When running in daemon mode, server is already started automatically.
     (server-start)))
 #+end_src
 
+** EPG and GPG Configuration
+
+Configure Emacs Privacy Guard (EPG) for proper GPG integration with plstore and org-gcal.
+#+begin_src emacs-lisp
+;; Use GPG agent for password prompts
+(setq epg-gpg-program "gpg")
+(setq epg-pinentry-mode 'loopback)
+
+;; Cache GPG passphrase in Emacs to avoid repeated prompts
+(setq epg-passphrase-alist nil)
+(defun my/cache-gpg-passphrase (context handback)
+  "Cache GPG passphrase for this session."
+  (let ((passphrase (read-passwd "GPG Passphrase: ")))
+    (setf (alist-get context epg-passphrase-alist) passphrase)
+    passphrase))
+(setq epg-ask-passphrase-function #'my/cache-gpg-passphrase)
+
+;; Auto-save plstore without prompting (for oauth tokens)
+(setq plstore-cache-passphrase-for-symmetric-encryption t)
+
+;; Ensure GPG can find the agent
+(unless (getenv "GPG_AGENT_INFO")
+  (let ((agent-sock (format "~/.gnupg/S.gpg-agent")))
+    (when (file-exists-p (expand-file-name agent-sock))
+      (setenv "GPG_AGENT_INFO" (format "%s:0:1" (expand-file-name agent-sock))))))
+#+end_src
+
 ** Auto-revert Mode
 
 Enable global auto-revert mode to automatically reload files when they change externally.
@@ -96,6 +133,15 @@ Display line numbers in programming and text modes.
 (setq display-line-numbers-type t)
 #+end_src
 
+** Browser Configuration
+
+Set Helium as the system default browser (handled by xdg-mime).
+Emacs will use the system default automatically.
+#+begin_src emacs-lisp
+;; Use system default browser (set via xdg-mime)
+(setq browse-url-browser-function 'browse-url-default-browser)
+#+end_src
+
 ** Performance Tuning
 
 Optimize Emacs for better responsiveness and lower resource usage.
@@ -118,11 +164,7 @@ Doom exposes five font variables for customization:
 - =doom-big-font= -- used for =doom-big-font-mode=
 - =doom-symbol-font= -- for symbols
 - =doom-serif-font= -- for the =fixed-pitch-serif= face
-Example configuration (commented out):
-#+begin_src emacs-lisp
-;;(setq doom-font (font-spec :family "Iosevka" :size 14 :weight 'semi-light)
-;;doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
-#+end_src
+Fonts are left at Doom defaults. Zen mode configures its own font sizing.
 
 ** Theme: Pywal Integration
 
@@ -208,7 +250,8 @@ Uses caching for performance - pass FORCE-REFRESH to bypass cache."
                 (cons (nth 5 (file-attributes cache-file)) result))
           result)))))
 (defun reload-pywal-theme ()
-  "Reload theme - use original doom theme if preset, else use ewal."
+  "Reload theme - use original doom theme if preset, else use ewal.
+Properly handles org-roam-ui websocket server to prevent port conflicts."
   (interactive)
   (let* ((colors-file (expand-file-name "~/.cache/wal/colors.json"))
          (json-object-type 'alist)
@@ -218,11 +261,20 @@ Uses caching for performance - pass FORCE-REFRESH to bypass cache."
          ;; Check if wallpaper is actual path (not "None" string)
          (is-wallpaper-based (and wallpaper 
                                   (not (string= wallpaper "None"))
-                                  (file-exists-p wallpaper))))
+                                  (file-exists-p wallpaper)))
+         ;; Save org-roam-ui state before theme change
+         (org-roam-ui-was-active (and (featurep 'org-roam-ui)
+                                       (bound-and-true-p org-roam-ui-mode))))
     
-    ;; Disable all old themes first to avoid conflicts
+    ;; Step 1: Stop org-roam-ui if running to prevent websocket port conflict
+    (when org-roam-ui-was-active
+      (org-roam-ui-mode -1)
+      (message "Stopped org-roam-ui for theme reload..."))
+    
+    ;; Step 2: Disable all old themes first to avoid conflicts
     (mapc #'disable-theme custom-enabled-themes)
     
+    ;; Step 3: Load the appropriate theme
     (if is-wallpaper-based
         ;; Wallpaper-based theme: use ewal with our fixes
         (progn
@@ -265,7 +317,15 @@ Uses caching for performance - pass FORCE-REFRESH to bypass cache."
          (t
           (ewal-load-colors)
           (load-theme 'ewal-doom-one t)
-          (message "Pywal theme reloaded (preset fallback to ewal)")))))))
+          (message "Pywal theme reloaded (preset fallback to ewal)")))))
+    
+    ;; Step 4: Restart org-roam-ui if it was running before
+    (when org-roam-ui-was-active
+      ;; Small delay to ensure theme is fully loaded
+      (run-at-time 0.3 nil 
+                   (lambda ()
+                     (org-roam-ui-mode 1)
+                     (message "Restarted org-roam-ui after theme reload"))))))
 #+end_src
 
 ** Transparency Toggle and Pywal Auto-Reload
@@ -301,7 +361,7 @@ State is persisted in ~/.cache/transparency-state and copied to /tmp on startup.
   (interactive)
   ;; Just call the system-wide toggle script which handles everything
   (start-process-shell-command 
-   "toggle-transparency" nil "toggle-transparency"))
+   "toggle-transparency" nil "~/.config/scripts/system/toggle-transparency"))
 ;; Watch for transparency state changes from external toggles (async, no startup impact)
 (when (functionp 'file-notify-add-watch)
   (let ((state-file "/tmp/transparency-state"))
@@ -349,12 +409,6 @@ newly installed themes.
   "Batch convert all Doom themes to pywal JSON presets." t)
 #+end_src
 
-** Dashboard Banner
-
-Banner setting is configured in the Dashboard Customization section (line ~1048)
-to ensure it loads after the theme but before the dashboard is displayed.
-This prevents blank flashes on startup while still using the custom XPM logo.
-
 * Org-Roam Configuration
 
 My org-roam setup is designed for academic work, using a Zettelkasten-style
@@ -363,12 +417,14 @@ knowledge management system with concepts, lectures, readings, and projects.
 ** Org-Roam UI
 
 Configure org-roam-ui for visual graph navigation of my knowledge base.
+Note: org-roam-ui-sync-theme is disabled to prevent websocket port conflicts during
+theme reloads, and to ensure better contrast in the web UI.
 #+begin_src emacs-lisp
 (use-package! org-roam-ui
   :after org-roam
   :hook (org-roam-mode . org-roam-ui-mode)
   :config
-  (setq org-roam-ui-sync-theme t
+  (setq org-roam-ui-sync-theme nil  ; Disabled to prevent port conflicts & ensure good contrast
         org-roam-ui-follow t
         org-roam-ui-update-on-save t
         org-roam-ui-open-on-start nil))
@@ -667,7 +723,20 @@ Helper function to mark a lecture as processed and move it from =raw/= to =proce
 
 Use =consult-fd= for live, telescope-like file finding without caching.
 #+begin_src emacs-lisp
-(map! :leader :desc "Find file (live)" "SPC" #'consult-fd)
+;; SPC SPC - Find file in current project/directory (fast)
+(map! :leader :desc "Find file (project)" "SPC" #'consult-fd)
+;; SPC f f - Find file from home directory (fast, can type / for root)
+(defun my/consult-fd-from-home ()
+  "Find file using consult-fd starting from home directory."
+  (interactive)
+  (let ((default-directory "~")
+        (projectile-require-project-root nil))
+    (consult-fd)))
+;; SPC f d - Find directory with consult-dir (built-in, fast)
+(map! :leader
+      :prefix "f"
+      :desc "Find file from home" "f" #'my/consult-fd-from-home
+      :desc "Find directory" "d" #'consult-dir)
 #+end_src
 
 ** Performance: Fast Search Tools
@@ -928,6 +997,18 @@ Lazy-loaded to avoid startup overhead.
   (setq presence-buffer-details-format-function #'my/presence-buffer-details))
 #+end_src
 
+* Org-Todo
+
+Configure todo keywords for different task types.
+#+begin_src emacs-lisp
+(after! org
+  (setq org-todo-keywords
+        '((sequence "TODO(t)" "PROJ(p)" "LOOP(l)" "SKILL(s)" "|" "DONE(d)" "KILL(k)")))
+  
+  ;; Add CLOSED timestamp when marking TODO as DONE
+  (setq org-log-done 'time))
+#+end_src
+
 * Org Agenda
 
 Single-page agenda overview tuned to my `inbox.org` workflow.
@@ -935,11 +1016,9 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
 (setq org-agenda-start-with-log-mode t)
 (after! org-agenda
   (setq org-agenda-files '("~/Documents/brain2/")
-        org-log-done 'time
         org-hide-emphasis-markers t
         org-agenda-compact-blocks t
         org-agenda-block-separator ?─)
-  
   ;; Use nerd-icons for priority symbols if you want (commented out by default)
   ;; (setq org-priority-highest ?A
   ;;       org-priority-lowest ?C
@@ -956,11 +1035,10 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
   (define-key org-agenda-mode-map (kbd "k") #'org-agenda-previous-line)
   ;; Fallback: ensure emphasis markers are hidden when org-mode starts
   (add-hook 'org-mode-hook (lambda () (setq org-hide-emphasis-markers t)))
-  
   ;; Custom agenda commands
   (setq org-agenda-custom-commands
         '(("o" "Overview"
-           alltodo "" 
+           alltodo ""
            ((org-agenda-overriding-header "Active Tasks")
             (org-agenda-skip-function
              (lambda ()
@@ -1023,11 +1101,141 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
         org-super-agenda-header-separator "")
   (org-super-agenda-mode 1))
 (defun my/org-agenda-skip-unless-top-level (top-level-heading)
-  "Skip entry unless it is under TOP-LEVEL-HEADING." 
+  "Skip entry unless it is under TOP-LEVEL-HEADING."
   (let ((path (ignore-errors (org-get-outline-path t t))))
-    (unless (and (consp path) (string= (car path) top-level-heading))
-      (or (outline-next-heading) (point-max)))))
+     (unless (and (consp path) (string= (car path) top-level-heading))
+       (or (outline-next-heading) (point-max)))))
 #+end_src
+
+* Google Calendar Integration
+
+Configure org-gcal to sync org-mode events with Google Calendar.
+This setup prioritizes *pushing* events TO Google Calendar from org-mode.
+Doom already provides calfw integration, we just need to configure org-gcal.
+
+** Setup Instructions
+
+1. Create Google Cloud Project and OAuth credentials:
+   - Go to https://console.cloud.google.com/
+   - Create a new project (or use existing)
+   - Enable Google Calendar API
+   - Create OAuth 2.0 credentials (Desktop app)
+   - Download the JSON credentials
+2. Store your credentials securely:
+   - Credentials stored in =~/.config/doom/.secrets/gcal-oauth.el= (not in git)
+   - Token will be stored in =~/.config/doom/.local/org-gcal/=
+
+** Configuration
+
+Load credentials early (before org-gcal loads):
+#+begin_src emacs-lisp
+;; Load Google Calendar OAuth credentials BEFORE org-gcal initializes
+;; This prevents "must set client-id and client-secret" errors on fresh restart
+(let ((secrets-file (expand-file-name "~/.config/doom/.secrets/gcal-oauth.el")))
+  (when (file-exists-p secrets-file)
+    (load secrets-file)))
+#+end_src
+
+Configure org-gcal with push-only mode:
+#+begin_src emacs-lisp
+(after! org-gcal
+  ;; Set local timezone for proper time conversion (CRITICAL!)
+  (setq org-gcal-local-timezone "Europe/London")
+  
+  ;; Set calendar location for Emacs calendar
+  (setq calendar-location-name "London, UK"
+        calendar-latitude 51.5
+        calendar-longitude -0.1
+        calendar-time-zone 0           ; GMT offset (0 minutes)
+        calendar-standard-time-zone-name "GMT"
+        calendar-daylight-time-zone-name "BST")
+  
+  ;; Map inbox.org to Google Calendar - sync scheduled/deadline events
+  (setq org-gcal-fetch-file-alist '(("hugo.serranochan@gmail.com" . "~/Documents/brain2/inbox.org"))
+        org-gcal-auto-local-sync t)
+  
+  ;; Wrapper that auto-sets calendar-id before posting (avoids prompt)
+  (defun my/org-gcal-post-with-calendar-id ()
+    "Post entry to Google Calendar, auto-setting calendar-id if missing."
+    (interactive)
+    (save-excursion
+      (org-back-to-heading t)
+      ;; Auto-add calendar-id property if missing
+      (unless (org-entry-get (point) "calendar-id")
+        (org-entry-put (point) "calendar-id" "hugo.serranochan@gmail.com"))
+      ;; Now post the event
+      (org-gcal-post-at-point)))
+  
+  ;; Auto-sync hooks: Push to Google Calendar on save/capture
+  (add-hook 'org-capture-after-finalize-hook 'org-gcal-sync)
+  (add-hook 'org-archive-hook 'org-gcal-sync))
+#+end_src
+
+Keybindings for calendar operations (always available, autoload org-gcal when used):
+#+begin_src emacs-lisp
+(map! :leader
+      :prefix "o"
+      :desc "Open calendar view" "c" #'+calendar/open-calendar
+      :desc "Fetch from Google Calendar" "g f" #'org-gcal-fetch
+      :desc "Post event to Calendar" "g p" (cmd! (require 'org-gcal) (my/org-gcal-post-with-calendar-id))
+      :desc "Delete Calendar event" "g d" (cmd! (require 'org-gcal) (org-gcal-delete-at-point)))
+#+end_src
+
+** Calfw Theme Integration
+
+Make calfw match your Doom theme for better readability:
+#+begin_src emacs-lisp
+(after! calfw
+  ;; Theme-aware faces for better readability with pywal/doom themes
+  (custom-set-faces!
+   ;; Main calendar title
+   '(cfw:face-title :inherit font-lock-keyword-face :height 1.5 :weight bold)
+   
+   ;; Header (day names)
+   '(cfw:face-header :inherit font-lock-function-name-face :weight bold)
+   
+   ;; Date grid
+   '(cfw:face-grid :inherit shadow)
+   
+   ;; Today's date highlight
+   '(cfw:face-today :background nil :foreground nil :weight bold 
+     :inherit (highlight font-lock-constant-face))
+   
+   ;; Default day titles
+   '(cfw:face-day-title :inherit default)
+   
+   ;; Sunday
+   '(cfw:face-sunday :inherit font-lock-warning-face :weight bold)
+   
+   ;; Saturday
+   '(cfw:face-saturday :inherit font-lock-type-face :weight bold)
+   
+   ;; Events/content
+   '(cfw:face-default-content :inherit font-lock-string-face)
+   
+   ;; Multi-day events
+   '(cfw:face-periods :inherit font-lock-keyword-face :slant italic)
+   
+   ;; Selected date
+   '(cfw:face-select :background nil :inherit region)
+   
+   ;; Holidays
+   '(cfw:face-holiday :inherit font-lock-warning-face)
+   
+   ;; Toolbar
+   '(cfw:face-toolbar :inherit mode-line)
+   '(cfw:face-toolbar-button-off :inherit mode-line-inactive)
+   '(cfw:face-toolbar-button-on :inherit mode-line :weight bold)))
+#+end_src
+
+** Usage
+
+- Create events in org-mode with timestamps: =SCHEDULED: <2025-01-15 Wed 14:00-15:00>=
+- Save the file → automatically syncs to Google Calendar
+- View calendar: =SPC o c=
+- Manual sync: =SPC o g s=
+- Post single event: =SPC o g p= (with cursor on event)
+- Delete event: =SPC o g d= (removes from both org and Google Calendar)
 
 * Org-Pomodoro Configuration
 
@@ -1228,29 +1436,32 @@ To view the full resolution, open the image externally with =RET= on the link.
 
 * Zen Mode Customization
 
-Configure zen mode (writeroom-mode) with smaller font, wider margins, no line numbers, and hidden org stars.
+Configure zen mode (writeroom-mode) with variable-pitch font for comfortable prose writing.
 #+begin_src emacs-lisp
-(setq +zen-text-scale 1)           ;; Font size scale (1 = one size larger)
-(setq writeroom-width 70)          ;; Column width (narrower = wider margins)
+(setq +zen-text-scale 1)           ;; Font size scale (1 = one size larger for readability)
+(setq writeroom-width 65)          ;; Column width (45 text columns = ~55 char margins on each side)
 ;; Configure org-modern to always be on for org-mode
 (after! org-modern
-  (setq org-modern-hide-stars 'leading)
+  (setq org-modern-fold-stars '(("∵" . "∴"))
+        org-modern-hide-stars 'leading)
   ;; Enable org-modern globally
   (add-hook 'org-mode-hook #'org-modern-mode))
-;; Zen mode hook - hide line numbers, adjust org-modern star display
+;; Zen mode hook - enable variable-pitch, hide line numbers
 (add-hook 'writeroom-mode-hook
   (lambda ()
     (if writeroom-mode
         (progn
           (display-line-numbers-mode -1)
           (when (derived-mode-p 'org-mode)
-            (setq-local org-modern-hide-stars t))
-          (text-scale-set 1))
+            (setq-local org-modern-hide-stars t)
+            (variable-pitch-mode 1))  ; Use proportional font for prose
+          (text-scale-set 2))  ; Larger font for comfortable reading
       (progn
         ;; Restore when exiting zen mode
         (display-line-numbers-mode 1)
         (when (derived-mode-p 'org-mode)
-          (setq-local org-modern-hide-stars 'leading))))))
+          (setq-local org-modern-hide-stars 'leading)
+          (variable-pitch-mode -1))))))
 #+end_src
 
 * Dashboard Customization
@@ -1261,10 +1472,10 @@ Configure zen mode (writeroom-mode) with smaller font, wider margins, no line nu
 ;; Dashboard menu sections
 (setq +doom-dashboard-menu-sections
       '(("Open project"
-         :icon (nerd-icons-octicon "nf-oct-repo" :face 'doom-dashboard-menu-title :height 1.3)
+         :icon (nerd-icons-devicon "nf-dev-git" :face 'doom-dashboard-menu-title :height 1.3)
          :action projectile-switch-project)
         ("Open documentation"
-         :icon (nerd-icons-faicon "nf-fa-book" :face 'doom-dashboard-menu-title :height 1.3)
+         :icon (nerd-icons-faicon "nf-fa-book_atlas" :face 'doom-dashboard-menu-title :height 1.3)
          :action doom/help)))
 (after! doom-dashboard
   ;; Adjust banner padding for better vertical centering
