@@ -447,6 +447,54 @@ so it adapts automatically to any wallpaper's color scheme."
       (when (facep 'rainbow-delimiters-depth-7-face)
         (set-face-attribute 'rainbow-delimiters-depth-7-face nil :foreground variable))
       
+      ;; ========================================================================
+      ;; CALFW (Calendar)
+      ;; ========================================================================
+      
+      ;; Calendar faces - ensure they adapt to pywal colors dynamically
+      (when (facep 'calfw-title-face)
+        (set-face-attribute 'calfw-title-face nil
+                            :foreground keyword :weight 'bold :height 1.5))
+      (when (facep 'calfw-header-face)
+        (set-face-attribute 'calfw-header-face nil
+                            :foreground function :weight 'bold))
+      (when (facep 'calfw-grid-face)
+        (set-face-attribute 'calfw-grid-face nil
+                            :foreground comment))
+      (when (facep 'calfw-today-face)
+        (set-face-attribute 'calfw-today-face nil
+                            :background selection :foreground fg :weight 'bold))
+      (when (facep 'calfw-today-title-face)
+        (set-face-attribute 'calfw-today-title-face nil
+                            :background selection :foreground fg :weight 'bold))
+      (when (facep 'calfw-day-title-face)
+        (set-face-attribute 'calfw-day-title-face nil
+                            :foreground fg))
+      (when (facep 'calfw-sunday-face)
+        (set-face-attribute 'calfw-sunday-face nil
+                            :foreground string :weight 'bold))
+      (when (facep 'calfw-saturday-face)
+        (set-face-attribute 'calfw-saturday-face nil
+                            :foreground type :weight 'bold))
+      (when (facep 'calfw-default-content-face)
+        (set-face-attribute 'calfw-default-content-face nil
+                            :foreground string))
+      (when (facep 'calfw-periods-face)
+        (set-face-attribute 'calfw-periods-face nil
+                            :foreground keyword :slant 'italic))
+      (when (facep 'calfw-holiday-face)
+        (set-face-attribute 'calfw-holiday-face nil
+                            :foreground string :weight 'bold))
+      (when (facep 'calfw-toolbar-face)
+        (set-face-attribute 'calfw-toolbar-face nil
+                            :foreground fg :background bg-lighter))
+      (when (facep 'calfw-toolbar-button-off-face)
+        (set-face-attribute 'calfw-toolbar-button-off-face nil
+                            :foreground comment :background bg-light))
+      (when (facep 'calfw-toolbar-button-on-face)
+        (set-face-attribute 'calfw-toolbar-button-on-face nil
+                            :foreground fg :background bg-lighter :weight 'bold))
+      
       (message "ewal-fix: Applied comprehensive face definitions"))))
 
 ;; Run after theme loads
