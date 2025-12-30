@@ -8,6 +8,7 @@
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
   - [[#emacs-server][Emacs Server]]
+  - [[#epg-and-gpg-configuration][EPG and GPG Configuration]]
   - [[#auto-revert-mode][Auto-revert Mode]]
   - [[#user-information][User Information]]
   - [[#line-numbers][Line Numbers]]
@@ -33,7 +34,9 @@
 - [[#rust-configuration][Rust Configuration]]
 - [[#ai-integration-copilot][AI Integration: Copilot]]
 - [[#ai-integration-gptel][AI Integration: GPTel]]
+  - [[#core-configuration][Core Configuration]]
   - [[#gptel-agent][GPTel Agent]]
+  - [[#usage-guide][Usage Guide]]
 - [[#discord-presence][Discord Presence]]
 - [[#org-todo][Org-Todo]]
 - [[#org-agenda][Org Agenda]]
@@ -47,6 +50,7 @@
 - [[#org-inline-images][Org Inline Images]]
 - [[#zen-mode-customization][Zen Mode Customization]]
 - [[#dashboard-customization][Dashboard Customization]]
+- [[#pdf-configuration][PDF Configuration]]
 - [[#vterm-configuration][Vterm Configuration]]
 - [[#circe-irc-configuration][Circe IRC Configuration]]
 
@@ -88,7 +92,6 @@ Configure Emacs Privacy Guard (EPG) for proper GPG integration with plstore and 
 ;; Use GPG agent for password prompts
 (setq epg-gpg-program "gpg")
 (setq epg-pinentry-mode 'loopback)
-
 ;; Cache GPG passphrase in Emacs to avoid repeated prompts
 (setq epg-passphrase-alist nil)
 (defun my/cache-gpg-passphrase (context handback)
@@ -97,10 +100,8 @@ Configure Emacs Privacy Guard (EPG) for proper GPG integration with plstore and 
     (setf (alist-get context epg-passphrase-alist) passphrase)
     passphrase))
 (setq epg-ask-passphrase-function #'my/cache-gpg-passphrase)
-
 ;; Auto-save plstore without prompting (for oauth tokens)
 (setq plstore-cache-passphrase-for-symmetric-encryption t)
-
 ;; Ensure GPG can find the agent
 (unless (getenv "GPG_AGENT_INFO")
   (let ((agent-sock (format "~/.gnupg/S.gpg-agent")))
@@ -901,55 +902,256 @@ Real-time code completion using GitHub Copilot.
 
 * AI Integration: GPTel
 
-GPTel provides AI assistance directly in Emacs.
+GPTel provides AI assistance directly in Emacs with multiple presets optimized for different workflows.
+
+** Core Configuration
+
 #+begin_src emacs-lisp
 (use-package! gptel
   :config
-  (setq gptel-model 'gpt-5-mini
+  ;; Default to Haiku for quick queries
+  (setq gptel-model 'claude-haiku-4.5
         gptel-backend (gptel-make-gh-copilot "Copilot")
         gptel-default-mode 'org-mode)
   
-  ;; Preset for org-roam PKM work with psychology studies
-  (gptel-make-preset 'brain2beta
-    :description "Org-roam PKM assistant for psychology studies"
+  ;; Helper function for dynamic context (project, file, buffer info)
+  (defun my/gptel-dynamic-context ()
+    "Generate dynamic context string for gptel prompts."
+    (let* ((project (and (fboundp 'projectile-project-name) 
+                        (projectile-project-name)))
+           (file (buffer-file-name))
+           (mode major-mode)
+           (in-brain2 (and file (string-match-p "Documents/brain2" file)))
+           (in-doom-config (and file (string-match-p "\\.config/doom" file)))
+           (in-dwm-config (and file (string-match-p "Documents/brain2/concepts/dwm\\.org" file))))
+      (concat
+       ;; Base environment
+       "You are in Doom Emacs on Arch Linux with DWM window manager. "
+       
+       ;; Current context
+       (when project
+         (format "Current project: %s. " project))
+       (when file
+         (format "Current file: %s. " (file-name-nondirectory file)))
+       (format "Major mode: %s. " mode)
+       
+       ;; Specific workspace context
+       (cond
+        (in-dwm-config
+         "This is the literate DWM config (dwm.org) which tangles to ~/.local/src/dwm/config.h. ")
+        (in-doom-config
+         "This is Doom Emacs config directory. Literate configs (.org files) tangle to .el files. ")
+        (in-brain2
+         "This is my org-roam PKM for psychology studies. Inbox.org contains todos and agenda info. Understand concept nodes, lecture notes, and org-roam links. "))
+       
+       "\n\n")))
+  
+  ;; Tool safety: require confirmation for destructive operations
+  (setq gptel-confirm-tool-calls '(write edit bash))
+  
+  ;; Presets for different workflows
+  
+  ;; 1. CODING - Sonnet 4.5 with full agent capabilities
+  (gptel-make-preset 'coding
+    :description "Coding assistant with full tool access (Sonnet 4.5)"
+    :backend "Copilot"
+    :model 'claude-sonnet-4.5
+    :system (lambda () 
+              (concat 
+               (my/gptel-dynamic-context)
+               "You are an expert coding assistant in Emacs. You have access to tools for reading files (including ~/Documents/brain2/ for notes/todos), searching code, running tests, and making edits. Always confirm before modifying code. Provide concise, actionable suggestions. When writing code, follow the project's existing style and patterns."))
+    :stream t
+    :temperature 0.3
+    :use-context 'system
+    :use-tools t)
+  
+  ;; 2. WRITING - GPT 5-mini for PKM work (lightweight, context-aware)
+  (gptel-make-preset 'writing
+    :description "Writing assistant for org-roam PKM (GPT 5-mini)"
+    :backend "Copilot"
+    :model 'gpt-5-mini
+    :system (lambda ()
+              (concat
+               (my/gptel-dynamic-context)
+               "You are a writing assistant for academic work in psychology. You're operating within an org-roam PKM system at ~/Documents/brain2/. Understand concept nodes, lecture notes, and the Zettelkasten method. Help with writing, clarifying ideas, and organizing knowledge. You have read tool access for referencing notes when needed. You should not create links, new nodes, or manage todos autonomously - that's handled by a different preset. Focus on writing, ideas, and academic content. Respond concisely and academically."))
+    :stream t
+    :temperature 0.7
+    :use-context 'system
+    :use-tools t)
+  
+  ;; 3. CONFIGURING - Sonnet 4.5 for system/Emacs configuration
+  (gptel-make-preset 'configuring
+    :description "Config assistant for DWM/Doom/system configs (Sonnet 4.5)"
+    :backend "Copilot"
+    :model 'claude-sonnet-4.5
+    :system (lambda ()
+              (concat
+               (my/gptel-dynamic-context)
+               "You are a system configuration expert for Arch Linux, DWM, and Doom Emacs. You understand:\n"
+               "- Literate programming with org-babel (edit .org files, not generated files)\n"
+               "- DWM configuration: dwm.org tangles to ~/.local/src/dwm/config.h\n"
+               "- Doom Emacs: config.org tangles to config.el\n"
+               "- The user will run org-babel-tangle themselves after edits\n"
+               "- DWMBlocks in ~/dotfiles/dwmblocks/\n"
+               "- Scripts in ~/dotfiles/scripts/.config/scripts/\n"
+               "- Pywal theming system with 120+ presets\n\n"
+               "You have full tool access including reading files anywhere (~/Documents/brain2/ for notes, config files, etc). Provide configuration suggestions that work with this literate setup. Always edit .org source files, not generated files. Explain the changes clearly."))
+    :stream t
+    :temperature 0.3
+    :use-context 'system
+    :use-tools t)
+  
+  ;; 4. QUICK - GPT 4.1 for task management and quick actions
+  (gptel-make-preset 'quick
+    :description "Fast task manager for todos/scheduling (GPT 4.1)"
     :backend "Copilot"
     :model 'gpt-4.1
-    :system "You are a large language model living in my DOOM Emacs and a helpful assistant. We are currently operating within my org-roam based PKM, which I am learning to use to manage my life studying psychology and my interests. Respond concisely."
+    :system (lambda ()
+              (concat
+               (my/gptel-dynamic-context)
+               "You are a fast, proactive task management assistant. Your job is to execute user requests with minimal back-and-forth. Key behaviors:\n\n"
+               "- **Inbox location**: ~/Documents/brain2/inbox.org\n"
+               "- **Read files silently**: When asked about todos, scheduling, or tasks, read Inbox.org immediately without asking\n"
+               "- **Infer intent**: If asked to 'schedule a todo', read the inbox, determine the right section (like 'This Week'), and write the entry there\n"
+               "- **Org format**: Use proper org syntax: '* TODO Title' with 'SCHEDULED: <YYYY-MM-DD Dow HH:MM>' for scheduled items\n"
+               "- **Be direct**: Just do it. Don't propose options unless genuinely unclear\n"
+               "- **Understand context**: If the user is in brain2, you're managing their life/psychology study todos. Act accordingly.\n\n"
+               "You have full read/write access. Use it. Get things done efficiently."))
+    :stream t
+    :temperature 0.4
+    :use-context 'system
+    :use-tools t)
+  
+  ;; Legacy preset (kept for compatibility)
+  (gptel-make-preset 'brain2beta
+    :description "[Legacy] Org-roam PKM assistant"
+    :backend "Copilot"
+    :model 'gpt-4.1
+    :system "You are a large language model living in my DOOM Emacs and a helpful assistant. We are currently operating within my org-roam based PKM at ~/Documents/brain2/, which I am learning to use to manage my life studying psychology and my interests. You have access to read tools - use them to read Inbox.org for todos or any other notes when needed. Respond concisely."
     :stream t
     :temperature 1.0
     :include-reasoning t
-    :use-context 'system))
+    :use-context 'system
+    :use-tools t))
+;; Configure gptel-quick (explain/summarize) to use gpt-4.1
+(after! gptel-quick
+  (setq gptel-quick-backend (gptel-make-gh-copilot "Copilot")
+        gptel-quick-model 'gpt-4.1))
+;; Configure gptel-magit to use gpt-4.1 with conventional commits
+(after! gptel-magit
+  (setq gptel-magit-backend (gptel-make-gh-copilot "Copilot")
+        gptel-magit-model 'gpt-4.1
+        ;; Custom prompt emphasizing brevity for personal repos
+        gptel-magit-commit-prompt
+        "You are an expert at writing Git commits. Write a short, clear commit message using conventional commits format.
+CRITICAL: The subject line MUST be under 50 characters. Be extremely concise.
+Format:
+    <type>: <concise description>
+    
+    [optional body if needed]
+Types: feat, fix, docs, style, refactor, test, chore
+Only add scope like `feat(scope):` when absolutely necessary. For personal repos with broad changes, omit the scope.
+Keep it SHORT. Examples of good length:
+- feat: add auth system
+- fix: handle null in parser
+- docs: update readme
+- refactor: simplify error handling
+If the change affects multiple files/areas in a personal backup repo, use a general description without scope.
+Only return the commit message. No meta-commentary."))
+;; Helper functions to quickly switch presets and open gptel
+(defun my/gptel-coding ()
+  "Open gptel with coding preset."
+  (interactive)
+  (let ((buf (gptel "*gptel-coding*")))
+    (switch-to-buffer buf)
+    (gptel--apply-preset 'coding (lambda (sym val) (set (make-local-variable sym) val)))))
+(defun my/gptel-writing ()
+  "Open gptel with writing preset."
+  (interactive)
+  (let ((buf (gptel "*gptel-writing*")))
+    (switch-to-buffer buf)
+    (gptel--apply-preset 'writing (lambda (sym val) (set (make-local-variable sym) val)))))
+(defun my/gptel-configuring ()
+  "Open gptel with configuring preset."
+  (interactive)
+  (let ((buf (gptel "*gptel-config*")))
+    (switch-to-buffer buf)
+    (gptel--apply-preset 'configuring (lambda (sym val) (set (make-local-variable sym) val)))))
+(defun my/gptel-quick ()
+  "Open gptel with quick preset."
+  (interactive)
+  (let ((buf (gptel "*gptel-quick*")))
+    (switch-to-buffer buf)
+    (gptel--apply-preset 'quick (lambda (sym val) (set (make-local-variable sym) val)))))
+;; Keybindings for preset switching (under SPC o l prefix)
+;; Don't redefine the prefix, just add to it
+(map! :leader
+      :desc "Coding (Sonnet)" "o l C" #'my/gptel-coding
+      :desc "Writing (5-mini)" "o l w" #'my/gptel-writing
+      :desc "Config (Sonnet)" "o l g" #'my/gptel-configuring
+      :desc "Quick (Haiku)" "o l q" #'my/gptel-quick)
 #+end_src
-To use GPTel:
-- =M-x gptel= -- Open a chat buffer
-- =M-x gptel-menu= -- Select model/backend
-- =C-u C-c RET= -- Open options menu to switch presets
-- In org-mode, select region and send to gptel for processing
 
 ** GPTel Agent
 
 GPTel Agent extends gptel with autonomous agent capabilities - the LLM can take actions,
 browse the web, read/write files, and execute code. Requires gptel to be up to date.
+The agent preset is already integrated into the presets above. Each preset has tools configured:
+- *Coding*: Full tool access with confirmation for writes/edits
+- *Writing*: Read tools for searching PKM, confirmation for writes
+- *Configuring*: Full tool access for config files
+- *Quick*: Full tool access for task management
+First, load gptel-agent to register tools:
 #+begin_src emacs-lisp
 (use-package! gptel-agent
   :after gptel
   :commands (gptel-agent)
+  :init
+  ;; Load tools early so they're available for gptel presets
+  (with-eval-after-load 'gptel
+    (require 'gptel-agent-tools)
+    ;; Set gptel-tools after tools are registered
+    (setq gptel-tools (gptel-get-tool "gptel-agent")))
   :config
   ;; Initialize agent tools and capabilities
   (gptel-agent-update))
-  
-  ;; Optional: Configure agent directories for custom sub-agents
-  ;; (add-to-list 'gptel-agent-dirs "~/path/to/custom/agents")
-;; Keybinding for gptel-agent (set globally, not in use-package)
-(map! :leader
-      :prefix "o"
-      :desc "GPTel Agent" "l c" #'gptel-agent)
 #+end_src
-To use GPTel Agent:
-- =M-x gptel-agent= -- Open a dedicated agent session in current project
-- =C-u M-x gptel-agent= -- Open with prefix for more options
-- Include =@gptel-agent= in any gptel prompt to use agent capabilities in any buffer
-- Switch between presets: agent mode (full autonomy) and planning mode (read-only)
+
+** Usage Guide
+
+*** Keybindings (SPC o l prefix)
+
+- =SPC o l l= -- Open gptel (default: quick preset)
+- =SPC o l m= -- Open gptel menu (switch models/presets)
+- =SPC o l c= -- Open gptel-agent (autonomous mode)
+- =SPC o l e= -- Explain selected text
+- =SPC o l a= -- Add text to context
+- =SPC o l f= -- Add file to context
+
+*** Quick Preset Switching (NEW)
+
+- =SPC o l C= -- Switch to Coding preset (Sonnet 3.5)
+- =SPC o l w= -- Switch to Writing preset (GPT 5-mini)
+- =SPC o l g= -- Switch to Config preset (Sonnet 3.5)
+- =SPC o l q= -- Switch to Quick preset (Haiku 3.5)
+
+*** Workflow Tips
+
+1. *Coding*: Use for code review, debugging, refactoring. Tools enabled for reading files and running tests.
+2. *Writing*: Use in org-roam for drafting, clarifying concepts, academic writing. Can search your PKM for context.
+3. *Configuring*: Use for system configs, DWM, Doom Emacs. Understands literate programming and tangling.
+4. *Quick*: Use for fast explanations, definitions, quick questions. No tool overhead.
+5. *Magit Integration*: AI-powered commit messages and diff explanations
+   - In magit commit menu: Press =c g= to generate conventional commit message
+   - In commit buffer: Press =M-g= to generate message
+   - In magit diff menu: Press =d x= to explain diff in plain language
+   - Uses GPT-4.1 with conventional commits format (feat/fix/docs/refactor/etc)
+
+*** Tool Safety
+
+- Read operations (search, file reading, web fetch): Auto-approved
+- Write operations (file edits, bash commands): Require confirmation
+- Configure via =gptel-confirm-tool-calls= variable
 
 * Discord Presence
 
@@ -1135,7 +1337,6 @@ Load credentials early (before org-gcal loads):
   (when (file-exists-p secrets-file)
     (load secrets-file)))
 #+end_src
-
 Configure org-gcal with push-only mode:
 #+begin_src emacs-lisp
 (after! org-gcal
@@ -1170,7 +1371,6 @@ Configure org-gcal with push-only mode:
   (add-hook 'org-capture-after-finalize-hook 'org-gcal-sync)
   (add-hook 'org-archive-hook 'org-gcal-sync))
 #+end_src
-
 Keybindings for calendar operations (always available, autoload org-gcal when used):
 #+begin_src emacs-lisp
 (map! :leader
@@ -1189,43 +1389,43 @@ Make calfw match your Doom theme for better readability:
   ;; Theme-aware faces for better readability with pywal/doom themes
   (custom-set-faces!
    ;; Main calendar title
-   '(cfw:face-title :inherit font-lock-keyword-face :height 1.5 :weight bold)
+   '(calfw-title-face :inherit font-lock-keyword-face :height 1.5 :weight bold)
    
    ;; Header (day names)
-   '(cfw:face-header :inherit font-lock-function-name-face :weight bold)
+   '(calfw-header-face :inherit font-lock-function-name-face :weight bold)
    
    ;; Date grid
-   '(cfw:face-grid :inherit shadow)
+   '(calfw-grid-face :inherit shadow)
    
    ;; Today's date highlight
-   '(cfw:face-today :background nil :foreground nil :weight bold 
+   '(calfw-today-face :background nil :foreground nil :weight bold 
      :inherit (highlight font-lock-constant-face))
    
    ;; Default day titles
-   '(cfw:face-day-title :inherit default)
+   '(calfw-day-title-face :inherit default)
    
    ;; Sunday
-   '(cfw:face-sunday :inherit font-lock-warning-face :weight bold)
+   '(calfw-sunday-face :inherit font-lock-warning-face :weight bold)
    
    ;; Saturday
-   '(cfw:face-saturday :inherit font-lock-type-face :weight bold)
+   '(calfw-saturday-face :inherit font-lock-type-face :weight bold)
    
    ;; Events/content
-   '(cfw:face-default-content :inherit font-lock-string-face)
+   '(calfw-default-content-face :inherit font-lock-string-face)
    
    ;; Multi-day events
-   '(cfw:face-periods :inherit font-lock-keyword-face :slant italic)
+   '(calfw-periods-face :inherit font-lock-keyword-face :slant italic)
    
-   ;; Selected date
-   '(cfw:face-select :background nil :inherit region)
+   ;; Selected date (note: calfw doesn't have a select face, using today-title instead)
+   '(calfw-today-title-face :background nil :inherit region :weight bold)
    
    ;; Holidays
-   '(cfw:face-holiday :inherit font-lock-warning-face)
+   '(calfw-holiday-face :inherit font-lock-warning-face)
    
    ;; Toolbar
-   '(cfw:face-toolbar :inherit mode-line)
-   '(cfw:face-toolbar-button-off :inherit mode-line-inactive)
-   '(cfw:face-toolbar-button-on :inherit mode-line :weight bold)))
+   '(calfw-toolbar-face :inherit mode-line)
+   '(calfw-toolbar-button-off-face :inherit mode-line-inactive)
+   '(calfw-toolbar-button-on-face :inherit mode-line :weight bold)))
 #+end_src
 
 ** Usage
@@ -1558,6 +1758,17 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
   ;; Force reload dashboard to apply changes
   (when (get-buffer +doom-dashboard-name)
     (+doom-dashboard-reload t)))
+#+end_src
+
+* PDF Configuration
+
+Configure pdf-tools for viewing PDF files in Emacs.
+#+begin_src emacs-lisp
+(use-package! pdf-tools
+  :mode ("\\.pdf\\'" . pdf-view-mode)
+  :config
+  (pdf-tools-install)
+  (setq pdf-view-continuous t))
 #+end_src
 
 * Vterm Configuration
