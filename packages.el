@@ -74,6 +74,7 @@
 (package! labburn-theme)
 
 ;; GPTel Agent - AI agent mode for GPTel
+(unpin! gptel)
 (package! gptel-agent)
 
 ;; Better agenda grouping

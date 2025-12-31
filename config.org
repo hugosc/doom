@@ -356,6 +356,14 @@ State is persisted in ~/.cache/transparency-state and copied to /tmp on startup.
 (let ((state (get-transparency-state)))
   (set-frame-parameter nil 'alpha-background 
                        (if (string= state "opaque") 100 85)))
+;; Apply transparency to all new frames (fixes emacsclient frame creation)
+(defun my/apply-transparency-to-frame (frame)
+  "Apply transparency state to newly created FRAME."
+  (let ((state (get-transparency-state)))
+    (set-frame-parameter frame 'alpha-background 
+                         (if (string= state "opaque") 100 85))))
+;; Hook into frame creation for emacsclient windows
+(add-hook 'after-make-frame-functions #'my/apply-transparency-to-frame)
 ;; Toggle function that syncs with system
 (defun toggle-emacs-transparency ()
   "Toggle emacs frame transparency and sync with system state."
