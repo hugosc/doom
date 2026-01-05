@@ -1216,8 +1216,19 @@ Configure todo keywords for different task types.
         '((sequence "TODO(t)" "PROJ(p)" "LOOP(l)" "SKILL(s)" "|" "DONE(d)" "KILL(k)")))
   
   ;; Add CLOSED timestamp when marking TODO as DONE
-  (setq org-log-done 'time))
-#+end_src
+  (setq org-log-done 'time)
+  
+  ;; Explicitly set DONE as the primary completion state
+  ;; This ensures C-c C-t cycles to DONE first, not KILL
+  (setq org-todo-repeat-to-state "TODO")
+  
+  ;; Configure logging for state changes
+  (setq org-log-redeadline 'time
+        org-log-reschedule 'time)
+  
+  ;; Use fast todo selection with single key press
+  (setq org-use-fast-todo-selection t))
+ #+end_src
 
 * Org Agenda
 
@@ -1282,24 +1293,34 @@ Single-page agenda overview tuned to my `inbox.org` workflow.
                (:name "Recurring" :todo "LOOP" :order 7)
                (:name "Unscheduled TODOs" :and (:todo "TODO" :not (:scheduled t :deadline t)) :order 8)
                (:discard (:todo ("DONE" "KILL")))))))
-          ("t" "Today"
-           agenda ""
-           ((org-agenda-span 'day)
-            (org-deadline-warning-days 0)
-            (org-agenda-start-with-log-mode nil)
+           ("t" "Today"
+            agenda ""
+            ((org-agenda-span 'day)
+             (org-deadline-warning-days 0)
+             (org-agenda-start-with-log-mode nil)
+             (org-agenda-skip-function
+              (lambda ()
+                (when (member (org-get-todo-state) '("DONE" "KILL"))
+                  (org-end-of-subtree t))))
             (org-super-agenda-groups
              '((:name "Scheduled Today" :scheduled today :order 1)
                (:name "Due Today" :deadline today :order 2)
-               (:name "Overdue" :deadline past :order 3)))))
-          ("w" "This Week"
-           agenda ""
-           ((org-agenda-span 7)
-            (org-deadline-warning-days 0)
-            (org-agenda-start-with-log-mode nil)
+               (:name "Overdue" :deadline past :order 3)
+               (:discard (:todo ("DONE" "KILL")))))))
+           ("w" "This Week"
+            agenda ""
+            ((org-agenda-span 7)
+             (org-deadline-warning-days 0)
+             (org-agenda-start-with-log-mode nil)
+             (org-agenda-skip-function
+              (lambda ()
+                (when (member (org-get-todo-state) '("DONE" "KILL"))
+                  (org-end-of-subtree t))))
             (org-super-agenda-groups
              '((:name "Overdue" :deadline past :order 1)
                (:name "Today" :scheduled today :deadline today :order 2)
-               (:name "This Week" :scheduled (next 7 days) :deadline (next 7 days) :order 3))))))))
+               (:name "This Week" :scheduled (next 7 days) :deadline (next 7 days) :order 3)
+               (:discard (:todo ("DONE" "KILL"))))))))))
 (use-package! org-super-agenda
   :after org-agenda
   :config
