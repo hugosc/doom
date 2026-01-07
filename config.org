@@ -73,6 +73,30 @@ Set the general org-directory for agenda and other org features.
 (setq org-directory "~/Documents/brain2/")
 #+end_src
 
+** Org-Attach Configuration
+
+Configure org-attach for per-heading attachments.
+Each heading with attachments gets its own directory.
+
+#+begin_src emacs-lisp
+(after! org-attach
+  ;; DISABLE inheritance - each heading gets its own attachment directory
+  ;; This allows multiple headings per daily note to have separate attachments
+  (setq org-attach-use-inheritance nil)
+  ;; Store attachments in .attach/ subdirectory (Doom default)
+  (setq org-attach-id-dir ".attach/")
+  ;; Use UUID folder format: first 2 chars as parent dir, rest as subdirectory
+  (setq org-attach-id-to-path-function-list 
+        '(org-attach-id-uuid-folder-format)))
+
+;; Configure org-download to work with heading-level attachments
+(after! org-download
+  ;; Don't organize by heading level - let org-attach handle the structure
+  (setq org-download-heading-lvl nil)
+  ;; Don't add annotations to image links
+  (setq org-download-annotate-function (lambda (_link) "")))
+#+end_src
+
 ** Emacs Server
 
 Start the emacs server to allow emacsclient connections (required for pywal hooks).
@@ -673,6 +697,111 @@ Interactive function to pick an org file and heading, then insert a link with pr
               (message "Inserted link: %s" link)))))))
 #+end_src
 
+** Smart Image Pasting
+
+Smart paste function that handles both clipboard image data (screenshots) and file paths (Yazi workflow).
+Automatically detects clipboard content type and routes to appropriate handler.
+
+#+begin_src emacs-lisp
+(defun my/org-smart-image-paste ()
+  "Smart paste: handles clipboard image data and file:// URIs from Yazi.
+Detects if clipboard contains:
+- file:// URI (from Yazi) -> copy file to current heading's attachments (images, PDFs, etc)
+- Image data (screenshot) -> use org-download at current heading
+Works naturally with org-mode's heading-level attachment system.
+Each heading gets its own attachment directory."
+  (interactive)
+  ;; Ensure we're in an org file and under a heading
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Must be in an org-mode buffer"))
+  (unless (org-at-heading-p)
+    (org-back-to-heading t))
+  (let* (;; Try to get clipboard text with timeout (2 seconds)
+         (clipboard-text (condition-case nil
+                            (with-timeout (2 nil)
+                              (string-trim (shell-command-to-string 
+                                           "timeout 2 xclip -o -selection clipboard -t UTF8_STRING 2>/dev/null")))
+                          (error nil)))
+         ;; Check if clipboard contains file:// URI from Yazi
+         (is-file-uri (and clipboard-text
+                          (not (string-empty-p clipboard-text))
+                          (string-prefix-p "file://" clipboard-text)))
+         ;; Extract actual file path from URI
+         (filepath (when is-file-uri
+                    (url-unhex-string (substring clipboard-text 7))))
+         ;; Validate it's a file we want to attach (images, PDFs, markdown, etc)
+         (is-valid-file (and filepath
+                             (file-exists-p filepath)
+                             (file-regular-p filepath)
+                             (member (downcase (or (file-name-extension filepath) ""))
+                                    '("png" "jpg" "jpeg" "gif" "webp" "bmp" "pdf" "md" "txt" "org")))))
+    (cond
+     ;; Yazi file:// URI workflow (images, PDFs, docs)
+     (is-valid-file
+      (my/attach-file-from-yazi filepath))
+     ;; Screenshot workflow - try org-download with error handling
+     (t
+      (condition-case err
+          (my/paste-screenshot-naturally)
+        (error
+         (user-error "No image found in clipboard. Please copy an image (screenshot) or file from Yazi first. Error: %s" 
+                     (error-message-string err))))))))
+
+(defun my/attach-file-from-yazi (filepath)
+  "Attach file from Yazi to current heading using org-attach.
+Handles images, PDFs, and documents. Creates heading ID and :ATTACH: tag if needed."
+  (save-excursion
+    ;; Ensure we're at the heading
+    (org-back-to-heading t)
+    (let* ((filename (file-name-nondirectory filepath))
+           (timestamp (format-time-string "_%Y%m%d_%H%M%S"))
+           (ext (file-name-extension filename))
+           (base (file-name-sans-extension filename))
+           (new-filename (format "%s%s.%s" base timestamp ext))
+           (is-image (member (downcase ext) '("png" "jpg" "jpeg" "gif" "webp" "bmp"))))
+      ;; Use org-attach to copy file (will create heading ID and :ATTACH: tag if needed)
+      (org-attach-attach filepath nil 'cp)
+      ;; Get the attachment directory and rename file to include timestamp
+      (let* ((attach-dir (org-attach-dir))
+             (old-path (expand-file-name filename attach-dir))
+             (new-path (expand-file-name new-filename attach-dir)))
+        (when (file-exists-p old-path)
+          (rename-file old-path new-path t)))
+      ;; Move to end of heading content to insert link
+      (org-end-of-subtree t t)
+      (unless (bolp) (insert "\n"))
+      (insert (format "[[attachment:%s]]\n" new-filename))
+      ;; Force refresh images if this was an image file
+      (when is-image
+        (org-remove-inline-images)
+        (org-display-inline-images t t (point-min) (point-max)))
+      (message "Attached from Yazi: %s (to heading: %s)" 
+               new-filename 
+               (org-get-heading t t t t)))))
+
+(defun my/paste-screenshot-naturally ()
+  "Paste screenshot using org-download at current heading.
+Creates heading ID and :ATTACH: tag if needed. Each heading gets its own directory."
+  (save-excursion
+    ;; Ensure we're at the heading
+    (org-back-to-heading t)
+    ;; Store heading info for message
+    (let ((heading-title (org-get-heading t t t t)))
+      ;; Move to end of heading to paste
+      (org-end-of-subtree t t)
+      ;; Call org-download-clipboard with timeout protection
+      (with-timeout (5 (user-error "Clipboard access timed out. Try clearing your clipboard or taking a new screenshot."))
+        (call-interactively #'org-download-clipboard))
+      ;; Force refresh ALL images after paste
+      (run-with-timer 0.1 nil
+        (lambda ()
+          (when (buffer-live-p (current-buffer))
+            (with-current-buffer (current-buffer)
+              (org-remove-inline-images)
+              (org-display-inline-images t t (point-min) (point-max))))))
+      (message "Screenshot pasted (to heading: %s)" heading-title))))
+#+end_src
+
 ** Keybindings
 
 All org-roam related keybindings are under the =SPC n= prefix.
@@ -682,6 +811,7 @@ All org-roam related keybindings are under the =SPC n= prefix.
         :desc "Insert file link" "n f" #'my/insert-file-link
         :desc "Add heading ID" "n i" #'my/add-heading-id
         :desc "Insert heading link" "n h" #'my/insert-heading-link
+        :desc "Smart image paste (data/file)" "n p" #'my/org-smart-image-paste
         :desc "Find/create node" "n n" #'org-roam-node-find
         :desc "Insert node link" "n l" #'org-roam-node-insert
         :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
@@ -1660,7 +1790,27 @@ To view the full resolution, open the image externally with =RET= on the link.
   ;; Display images at max 800px width instead of full resolution
   ;; This reduces rendering overhead for large screenshots
   (setq org-image-actual-width 600)
-  (setq org-image-align 'center))
+  ;; Left-align by default (centered in writeroom mode via hook below)
+  (setq org-image-align 'left))
+#+end_src
+
+** Unified Image Display for Org-Download
+
+Override org-download to display ALL images in buffer after pasting.
+This ensures consistent toggle behavior (=z i=) for both pasted and manually attached images.
+
+Without this, pasting a new image only displays images in the current heading,
+which breaks toggle functionality for manual attachments in other headings.
+#+begin_src emacs-lisp
+;; Override org-download to display ALL images after pasting
+;; This ensures consistent toggle behavior with z i for both pasted and manual attachments
+(after! org-download
+  (defun org-download--display-inline-images ()
+    "Display all inline images in buffer after pasting.
+This ensures org-inline-image-overlays includes all images,
+making z i toggle work consistently for manual and pasted attachments."
+    (when (eq org-download-display-inline-images t)
+      (org-display-inline-images t nil (point-min) (point-max)))))
 #+end_src
 
 * Zen Mode Customization
@@ -1675,7 +1825,7 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
         org-modern-hide-stars 'leading)
   ;; Enable org-modern globally
   (add-hook 'org-mode-hook #'org-modern-mode))
-;; Zen mode hook - enable variable-pitch, hide line numbers
+;; Zen mode hook - enable variable-pitch, hide line numbers, center images
 (add-hook 'writeroom-mode-hook
   (lambda ()
     (if writeroom-mode
@@ -1683,14 +1833,20 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
           (display-line-numbers-mode -1)
           (when (derived-mode-p 'org-mode)
             (setq-local org-modern-hide-stars t)
-            (variable-pitch-mode 1))  ; Use proportional font for prose
+            (variable-pitch-mode 1)  ; Use proportional font for prose
+            (setq-local org-image-align 'center)  ; Center images in zen mode
+            (when org-inline-image-overlays  ; Refresh if images are displayed
+              (org-redisplay-inline-images)))
           (text-scale-set 2))  ; Larger font for comfortable reading
       (progn
         ;; Restore when exiting zen mode
         (display-line-numbers-mode 1)
         (when (derived-mode-p 'org-mode)
           (setq-local org-modern-hide-stars 'leading)
-          (variable-pitch-mode -1))))))
+          (variable-pitch-mode -1)
+          (setq-local org-image-align 'left)  ; Restore left alignment
+          (when org-inline-image-overlays  ; Refresh if images are displayed
+            (org-redisplay-inline-images)))))))
 #+end_src
 
 * Dashboard Customization
