@@ -1013,9 +1013,10 @@ Configure rust-analyzer to use the correct sysroot from rustup.
 * AI Integration: Copilot
 
 Real-time code completion using GitHub Copilot.
+Copilot is NOT started automatically - toggle it per-buffer with =SPC o l t=.
 #+begin_src emacs-lisp
 (use-package! copilot
-  :hook (prog-mode . copilot-mode)
+  :commands (copilot-mode copilot-toggle)
   :bind (:map copilot-completion-map
               ("<tab>" . 'copilot-accept-completion)
               ("TAB" . 'copilot-accept-completion)
@@ -1066,6 +1067,11 @@ Real-time code completion using GitHub Copilot.
   (after! evil
     (evil-define-key 'insert 'global (kbd "<tab>") #'my/copilot-tab-or-default)
     (evil-define-key 'insert 'global (kbd "TAB") #'my/copilot-tab-or-default)))
+
+;; Keybinding to toggle copilot (similar to gptel workflow)
+(map! :leader
+      :desc "Toggle Copilot" "o l t" #'copilot-mode)
+#+end_src
 #+end_src
 
 * AI Integration: GPTel
@@ -1828,7 +1834,6 @@ To view the full resolution, open the image externally with =RET= on the link.
 
 Override org-download to display ALL images in buffer after pasting.
 This ensures consistent toggle behavior (=z i=) for both pasted and manually attached images.
-
 Without this, pasting a new image only displays images in the current heading,
 which breaks toggle functionality for manual attachments in other headings.
 #+begin_src emacs-lisp
@@ -1988,8 +1993,8 @@ Configure pdf-tools for viewing PDF files in Emacs.
 
 * Vterm Configuration
 
-The problem: Evil intercepts ESC globally before vterm can handle it.
-The solution: Disable Evil's ESC keybinding in vterm buffers.
+Evil intercepts ESC globally before vterm can handle it.
+Disable Evil's ESC keybinding in vterm buffers.
 #+begin_src emacs-lisp
 (after! vterm
   (add-hook 'vterm-mode-hook
