@@ -49,7 +49,7 @@
        (popup +defaults)   ; tame sudden yet inevitable temporary windows
        smooth-scroll     ; DISABLED - aesthetic overhead on every scroll
        ;;tabs              ; a tab bar for Emacs
-       treemacs          ; DISABLED - using yazi instead for file management
+       ;;treemacs          ; DISABLED - using yazi instead for file management
        ;;unicode           ; extended unicode support for various languages
        (vc-gutter +pretty) ; vcs diff in the fringe
        vi-tilde-fringe   ; fringe tildes to mark beyond EOB
@@ -89,7 +89,7 @@
 
        :checkers
        syntax              ; tasing you for every semicolon you forget
-       ;;(spell +flyspell) ; tasing you for misspelling mispelling
+       (spell +flyspell +hunspell) ; tasing you for misspelling mispelling
        ;;grammar           ; tasing grammar mistake every you make
 
        :tools

@@ -7,6 +7,7 @@
 - [[#introduction][Introduction]]
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
+  - [[#org-attach-configuration][Org-Attach Configuration]]
   - [[#emacs-server][Emacs Server]]
   - [[#epg-and-gpg-configuration][EPG and GPG Configuration]]
   - [[#auto-revert-mode][Auto-revert Mode]]
@@ -25,6 +26,7 @@
   - [[#capture-templates][Capture Templates]]
   - [[#org-roam-dailies][Org-Roam Dailies]]
   - [[#helper-functions][Helper Functions]]
+  - [[#smart-image-pasting][Smart Image Pasting]]
   - [[#keybindings][Keybindings]]
   - [[#buffer-navigation][Buffer Navigation]]
 - [[#lecture-processing][Lecture Processing]]
@@ -49,6 +51,7 @@
 - [[#org-pomodoro-configuration][Org-Pomodoro Configuration]]
 - [[#org-formatting][Org Formatting]]
 - [[#org-inline-images][Org Inline Images]]
+  - [[#unified-image-display-for-org-download][Unified Image Display for Org-Download]]
 - [[#zen-mode-customization][Zen Mode Customization]]
 - [[#dashboard-customization][Dashboard Customization]]
 - [[#pdf-configuration][PDF Configuration]]
@@ -78,7 +81,6 @@ Set the general org-directory for agenda and other org features.
 
 Configure org-attach for per-heading attachments.
 Each heading with attachments gets its own directory.
-
 #+begin_src emacs-lisp
 (after! org-attach
   ;; DISABLE inheritance - each heading gets its own attachment directory
@@ -89,7 +91,6 @@ Each heading with attachments gets its own directory.
   ;; Use UUID folder format: first 2 chars as parent dir, rest as subdirectory
   (setq org-attach-id-to-path-function-list 
         '(org-attach-id-uuid-folder-format)))
-
 ;; Configure org-download to work with heading-level attachments
 (after! org-download
   ;; Don't organize by heading level - let org-attach handle the structure
@@ -155,8 +156,35 @@ Configure user information for GPG, email clients, and file templates.
 ** Line Numbers
 
 Display line numbers in programming and text modes.
+ #+begin_src emacs-lisp
+ (setq display-line-numbers-type t)
+ #+end_src
+
+** Visual Line Motion (Wrapped Lines)
+
+Enable soft-wrapping for notes, and make Evil `j`/`k` move by *visual* (screen) lines
+when lines wrap.
+
 #+begin_src emacs-lisp
-(setq display-line-numbers-type t)
+;; Prefer Emacs' visual line wrapping for prose/note-taking.
+(add-hook 'text-mode-hook #'visual-line-mode)
+(add-hook 'org-mode-hook  #'visual-line-mode)
+
+;; Make Evil motions follow wrapped (screen) lines.
+(after! evil
+  (setq evil-respect-visual-line-mode t)
+
+  ;; Like common Neovim setups: j/k => visual lines, gj/gk => logical lines.
+  (map! :map evil-motion-state-map
+        "j"  #'evil-next-visual-line
+        "k"  #'evil-previous-visual-line
+        "gj" #'evil-next-line
+        "gk" #'evil-previous-line
+        :map evil-normal-state-map
+        "j"  #'evil-next-visual-line
+        "k"  #'evil-previous-visual-line
+        "gj" #'evil-next-line
+        "gk" #'evil-previous-line))
 #+end_src
 
 ** Browser Configuration
@@ -496,7 +524,7 @@ My capture templates support different types of content in my knowledge system:
 (after! org-roam
   (setq org-roam-v2-ack t)
   (setq org-roam-capture-templates
-        '(("l" "Lecture quicknote" plain
+        '(("t" "Lecture quicknote" plain
            "%?\n* Post-Lecture Checklist\n- [ ] Extract definitions\n- [ ] Create/update concept node\n- [ ] Link readings\n- [ ] Mark processed"
            :if-new (file+head "academic/lectures/raw/%<%Y-%m-%d>-${slug}.org"
                               "#+TITLE: %<%Y-%m-%d> ${title} Lecture\n#+FILETAGS: :lecture:raw:\n")
@@ -721,7 +749,6 @@ Interactive function to pick an org file and heading, then insert a link with pr
 
 Smart paste function that handles both clipboard image data (screenshots) and file paths (Yazi workflow).
 Automatically detects clipboard content type and routes to appropriate handler.
-
 #+begin_src emacs-lisp
 (defun my/org-smart-image-paste ()
   "Smart paste: handles clipboard image data and file:// URIs from Yazi.
@@ -768,7 +795,6 @@ Each heading gets its own attachment directory."
         (error
          (user-error "No image found in clipboard. Please copy an image (screenshot) or file from Yazi first. Error: %s" 
                      (error-message-string err))))))))
-
 (defun my/attach-file-from-yazi (filepath)
   "Attach file from Yazi to current heading using org-attach.
 Handles images, PDFs, and documents. Creates heading ID and :ATTACH: tag if needed."
@@ -800,7 +826,6 @@ Handles images, PDFs, and documents. Creates heading ID and :ATTACH: tag if need
       (message "Attached from Yazi: %s (to heading: %s)" 
                new-filename 
                (org-get-heading t t t t)))))
-
 (defun my/paste-screenshot-naturally ()
   "Paste screenshot at current heading by downloading from clipboard.
 Creates heading ID and :ATTACH: tag if needed. Each heading gets its own directory.
@@ -1028,6 +1053,48 @@ Configure rust-analyzer to use the correct sysroot from rustup.
        (:checkOnSave t
         :procMacro (:enable t)
         :cargo (:buildScripts (:enable t)))))))
+#+end_src
+
+* Java Configuration
+
+Configure eglot for Java with JDT LS and decompiled vendor sources.
+Doom's java module doesn't auto-enable eglot when using =(lsp +eglot)=, so we add the hook manually.
+#+begin_src emacs-lisp
+;; Ensure eglot is loaded first
+(use-package! eglot
+  :defer t
+  :config
+  ;; Configure jdtls with better memory settings
+  (add-to-list 'eglot-server-programs
+               '((java-mode java-ts-mode) . 
+                 ("jdtls"
+                  "-Xmx2G"  ; Increase max heap to 2GB (default is too small)
+                  "-Xms1G"  ; Start with 1GB heap
+                  "--jvm-arg=-XX:+UseG1GC"  ; Use G1 garbage collector
+                  "--jvm-arg=-XX:+UseStringDeduplication"))) ; Save memory
+  
+  ;; Performance: increase timeout for slow operations
+  (setq eglot-sync-connect nil        ; Don't block Emacs waiting for server
+        eglot-connect-timeout 60      ; Allow 60s for initial connection
+        eglot-autoshutdown t          ; Shutdown server when last buffer closes
+        eglot-send-changes-idle-time 0.5) ; Send changes after 0.5s idle
+  
+  ;; Enable hover documentation (eldoc)
+  (add-hook 'eglot-managed-mode-hook
+            (lambda ()
+              (when (derived-mode-p 'java-mode)
+                ;; Enable eldoc for hover info (Shift-K)
+                (setq eldoc-echo-area-use-multiline-p t)
+                (eldoc-mode 1)))))
+
+;; Add hook to auto-start eglot in java-mode
+(add-hook 'java-mode-hook #'eglot-ensure)
+
+;; Keybinding for hover info (Shift-K in evil normal mode)
+(map! :after eglot
+      :map eglot-mode-map
+      :n "K" #'eldoc-doc-buffer  ; Show hover info in dedicated buffer
+      :n "g K" #'eglot-code-actions) ; Code actions with g K
 #+end_src
 
 * AI Integration: Copilot
