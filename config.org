@@ -14,6 +14,7 @@
   - [[#line-numbers][Line Numbers]]
   - [[#browser-configuration][Browser Configuration]]
   - [[#performance-tuning][Performance Tuning]]
+  - [[#writing-aids-spell-and-grammar][Writing Aids (Spell and Grammar)]]
 - [[#visual-configuration][Visual Configuration]]
   - [[#fonts][Fonts]]
   - [[#theme-pywal-integration][Theme: Pywal Integration]]
@@ -177,6 +178,25 @@ Optimize Emacs for better responsiveness and lower resource usage.
 (setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
 ;; Don't check VC info during auto-revert (much faster)
 (setq auto-revert-check-vc-info nil)
+#+end_src
+
+** Writing Aids (Spell and Grammar)
+
+Doom's `:checkers spell` module enables on-the-fly spell checking (squiggles) in
+many text modes (org/markdown/git commit, etc). Dictionary comes from
+`ispell-dictionary`.
+#+begin_src emacs-lisp
+(after! ispell
+  ;; Match your installed hunspell dictionaries (see `hunspell -D`).
+  (setq ispell-dictionary "en_GB"))
+#+end_src
+The `:checkers grammar` module integrates LanguageTool (via `langtool`) plus
+`writegood-mode`. LanguageTool itself is an external dependency; on Arch it's
+typically `pacman -S languagetool`. After installing it, you can use:
+`M-x langtool-check` / `M-x langtool-correct-buffer`.
+#+begin_src emacs-lisp
+(after! langtool
+  (setq langtool-default-language "en-GB"))
 #+end_src
 
 * Visual Configuration
