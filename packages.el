@@ -86,3 +86,6 @@
 
 ;; Google Calendar integration (calfw already included with Doom's calendar module)
 (package! org-gcal)
+
+;; Floating child frame popup for eldoc/hover docs (VS Code-style Shift-K)
+(package! eldoc-box)

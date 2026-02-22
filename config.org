@@ -198,12 +198,7 @@ Emacs will use the system default automatically.
 
 ** Performance Tuning
 
-Optimize Emacs for better responsiveness and lower resource usage.
 #+begin_src emacs-lisp
-;; Increase garbage collection threshold for less frequent GC pauses
-(setq gc-cons-threshold 100000000)  ; 100 MB (default is 800KB)
-;; Increase amount of data Emacs reads from processes (better for LSP)
-(setq read-process-output-max (* 1024 1024))  ; 1MB (default is 4KB)
 ;; Don't check VC info during auto-revert (much faster)
 (setq auto-revert-check-vc-info nil)
 #+end_src
@@ -1090,11 +1085,55 @@ Doom's java module doesn't auto-enable eglot when using =(lsp +eglot)=, so we ad
 ;; Add hook to auto-start eglot in java-mode
 (add-hook 'java-mode-hook #'eglot-ensure)
 
-;; Keybinding for hover info (Shift-K in evil normal mode)
-(map! :after eglot
-      :map eglot-mode-map
-      :n "K" #'eldoc-doc-buffer  ; Show hover info in dedicated buffer
-      :n "g K" #'eglot-code-actions) ; Code actions with g K
+;; eldoc-box: floating child frame popup for hover docs (VS Code-style Shift-K)
+(use-package! eldoc-box
+  :config
+  (setq eldoc-box-max-pixel-width 600
+        eldoc-box-max-pixel-height 400
+        eldoc-box-clear-with-C-g t
+        eldoc-box-cleanup-interval 0.5))
+
+;; Override Doom's +eglot-lookup-documentation with a toggle:
+;; - First K  → floating eldoc-box child frame
+;; - Second K → dismiss frame, open the classic *eglot-help* split (Doom's
+;;              original behaviour, with q to quit and full scrollability)
+;; A flag variable tracks whether the box was open so we don't rely on
+;; frame-visible-p (which is already nil by the time the command runs again).
+(after! (eglot eldoc-box)
+  (defvar +eglot--help-box-was-open nil
+    "Non-nil when eldoc-box child frame was shown on last K press.")
+
+  (defun +eglot-lookup-documentation (_identifier)
+    "Show hover docs via eldoc-box. Press K again to open the classic help split."
+    (if +eglot--help-box-was-open
+        (progn
+          (setq +eglot--help-box-was-open nil)
+          ;; Call Doom's original implementation directly by looking up the
+          ;; hover info ourselves, same as the original +eglot-lookup-documentation.
+          (eglot--dbind ((Hover) contents range)
+              (jsonrpc-request (eglot--current-server-or-lose) :textDocument/hover
+                               (eglot--TextDocumentPositionParams))
+            (let ((blurb (and (not (seq-empty-p contents))
+                              (eglot--hover-info contents range)))
+                  (hint (thing-at-point 'symbol)))
+              (if blurb
+                  (with-current-buffer
+                      (or (and (buffer-live-p +eglot--help-buffer)
+                               +eglot--help-buffer)
+                          (setq +eglot--help-buffer (generate-new-buffer "*eglot-help*")))
+                    (with-help-window (current-buffer)
+                      (rename-buffer (format "*eglot-help for %s*" hint))
+                      (with-current-buffer standard-output (insert blurb))
+                      (setq-local nobreak-char-display nil)))
+                (display-local-help))))
+          'deferred)
+      (setq +eglot--help-box-was-open t)
+      ;; Reset flag whenever the frame is dismissed by any means (C-g, cursor move, etc.)
+      (advice-add 'eldoc-box-quit-frame :after
+                  (lambda (&rest _) (setq +eglot--help-box-was-open nil))
+                  '((name . +eglot--reset-box-flag)))
+      (eldoc-box-help-at-point)
+      t)))
 #+end_src
 
 * AI Integration: Copilot
