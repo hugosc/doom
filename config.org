@@ -892,6 +892,9 @@ All org-roam related keybindings are under the =SPC n= prefix.
 ** Buffer Navigation
 
 Keybindings for cycling through buffers with Alt+Shift+H/L.
+Cycles through the current workspace's buffer list (the same set shown by =SPC ,=)
+so that buffers added via =C-c p a= are included. Falls back to all buffers if
+the workspaces module is not active.
 We need to unbind evil-org-mode's bindings which override the global ones.
 #+begin_src emacs-lisp
 ;; Unbind evil-org-mode's M-H and M-L bindings
@@ -899,9 +902,38 @@ We need to unbind evil-org-mode's bindings which override the global ones.
   (map! :map evil-org-mode-map
         :nvi "M-H" nil
         :nvi "M-L" nil))
+
+(defun +my/workspace-buffer-list ()
+  "Return the current workspace's buffer list, falling back to all buffers."
+  (if (fboundp '+workspace-buffer-list)
+      (+workspace-buffer-list)
+    (buffer-list)))
+
+(defun +my/workspace-next-buffer ()
+  "Switch to the next buffer in the current workspace (wraps around)."
+  (interactive)
+  (let* ((buffers (+my/workspace-buffer-list))
+         (current (current-buffer))
+         (idx (cl-position current buffers))
+         (next (if idx
+                   (nth (mod (1+ idx) (length buffers)) buffers)
+                 (car buffers))))
+    (when next (switch-to-buffer next))))
+
+(defun +my/workspace-previous-buffer ()
+  "Switch to the previous buffer in the current workspace (wraps around)."
+  (interactive)
+  (let* ((buffers (+my/workspace-buffer-list))
+         (current (current-buffer))
+         (idx (cl-position current buffers))
+         (prev (if idx
+                   (nth (mod (1- idx) (length buffers)) buffers)
+                 (car buffers))))
+    (when prev (switch-to-buffer prev))))
+
 ;; Now set our buffer navigation bindings
-(map! :nvi "M-H" #'previous-buffer
-      :nvi "M-L" #'next-buffer)
+(map! :nvi "M-H" #'+my/workspace-previous-buffer
+      :nvi "M-L" #'+my/workspace-next-buffer)
 #+end_src
 
 * Lecture Processing
