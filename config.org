@@ -135,6 +135,39 @@ Configure Emacs Privacy Guard (EPG) for proper GPG integration with plstore and 
       (setenv "GPG_AGENT_INFO" (format "%s:0:1" (expand-file-name agent-sock))))))
 #+end_src
 
+** Window Navigation: C-hjkl like C-w hjkl (nvim)
+
+Move between windows with =C-h/j/k/l= in normal/visual/motion states, mirroring Neovim's =C-w hjkl=.
+
+#+begin_src emacs-lisp
+(after! evil
+  (map! :nvm "C-h" #'evil-window-left
+        :nvm "C-j" #'evil-window-down
+        :nvm "C-k" #'evil-window-up
+        :nvm "C-l" #'evil-window-right))
+#+end_src
+
+** Window Zoom Toggle: SPC w z
+
+Toggle a focused single-window view without destroying the layout. Saves the window configuration, switches to a single window, and restores on second call.
+
+#+begin_src emacs-lisp
+(defvar my/window-zoom--saved-config nil
+  "Saved window configuration before zooming in.")
+
+(defun my/toggle-window-zoom ()
+  "Toggle focused single-window view, preserving the window layout."
+  (interactive)
+  (if my/window-zoom--saved-config
+      (progn
+        (set-window-configuration my/window-zoom--saved-config)
+        (setq my/window-zoom--saved-config nil))
+    (setq my/window-zoom--saved-config (current-window-configuration))
+    (delete-other-windows)))
+
+(map! :leader :desc "Zoom/unzoom window" "w z" #'my/toggle-window-zoom)
+#+end_src
+
 ** Auto-revert Mode
 
 Enable global auto-revert mode to automatically reload files when they change externally.
