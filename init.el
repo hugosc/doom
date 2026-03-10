@@ -49,7 +49,7 @@
        (popup +defaults)   ; tame sudden yet inevitable temporary windows
        smooth-scroll     ; DISABLED - aesthetic overhead on every scroll
        ;;tabs              ; a tab bar for Emacs
-       ;;treemacs          ; DISABLED - using yazi instead for file management
+       treemacs          ; DISABLED - using yazi instead for file management
        ;;unicode           ; extended unicode support for various languages
        (vc-gutter +pretty) ; vcs diff in the fringe
        vi-tilde-fringe   ; fringe tildes to mark beyond EOB
@@ -193,7 +193,7 @@
        :app
        calendar
        emms              ; Emacs multimedia system for playing music
-       ;;everywhere        ; *leave* Emacs!? You must be joking
+       everywhere        ; *leave* Emacs!? You must be joking
        irc               ; how neckbeards socialize
        ;;(rss +org)        ; emacs as an RSS reader
 

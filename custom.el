@@ -32,7 +32,7 @@
      (sequence "|" "OKAY(o)" "YES(y)" "NO(n)")))
  '(package-selected-packages
    '(agent-shell ample-theme blackjack cacao-theme darktooth-theme gptel-agent
-     kuronami-theme labburn-theme org-pomodoro punpun-themes sublime-themes
+     kuronami-theme labburn-theme nov org-pomodoro punpun-themes sublime-themes
      sunburn-theme warm-night-theme)))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.

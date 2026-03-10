@@ -10,9 +10,12 @@
   - [[#org-attach-configuration][Org-Attach Configuration]]
   - [[#emacs-server][Emacs Server]]
   - [[#epg-and-gpg-configuration][EPG and GPG Configuration]]
+  - [[#window-navigation-c-hjkl-like-c-w-hjkl-nvim][Window Navigation: C-hjkl like C-w hjkl (nvim)]]
+  - [[#window-zoom-toggle-spc-w-z][Window Zoom Toggle: SPC w z]]
   - [[#auto-revert-mode][Auto-revert Mode]]
   - [[#user-information][User Information]]
   - [[#line-numbers][Line Numbers]]
+  - [[#visual-line-motion-wrapped-lines][Visual Line Motion (Wrapped Lines)]]
   - [[#browser-configuration][Browser Configuration]]
   - [[#performance-tuning][Performance Tuning]]
   - [[#writing-aids-spell-and-grammar][Writing Aids (Spell and Grammar)]]
@@ -28,6 +31,7 @@
   - [[#helper-functions][Helper Functions]]
   - [[#smart-image-pasting][Smart Image Pasting]]
   - [[#keybindings][Keybindings]]
+  - [[#org-roam-link-hover-k][Org-Roam Link Hover (K)]]
   - [[#buffer-navigation][Buffer Navigation]]
 - [[#lecture-processing][Lecture Processing]]
 - [[#file-navigation][File Navigation]]
@@ -35,6 +39,7 @@
   - [[#yazi-integration-eeeel][Yazi Integration (eee.el)]]
   - [[#dired-configuration][Dired Configuration]]
 - [[#rust-configuration][Rust Configuration]]
+- [[#java-configuration][Java Configuration]]
 - [[#ai-integration-copilot][AI Integration: Copilot]]
 - [[#ai-integration-gptel][AI Integration: GPTel]]
   - [[#core-configuration][Core Configuration]]
@@ -55,8 +60,10 @@
 - [[#zen-mode-customization][Zen Mode Customization]]
 - [[#dashboard-customization][Dashboard Customization]]
 - [[#pdf-configuration][PDF Configuration]]
+- [[#epub-configuration][EPUB Configuration]]
 - [[#vterm-configuration][Vterm Configuration]]
 - [[#circe-irc-configuration][Circe IRC Configuration]]
+- [[#emacs-everywhere][Emacs Everywhere]]
 
 * Introduction
 
@@ -138,7 +145,6 @@ Configure Emacs Privacy Guard (EPG) for proper GPG integration with plstore and 
 ** Window Navigation: C-hjkl like C-w hjkl (nvim)
 
 Move between windows with =C-h/j/k/l= in normal/visual/motion states, mirroring Neovim's =C-w hjkl=.
-
 #+begin_src emacs-lisp
 (after! evil
   (map! :nvm "C-h" #'evil-window-left
@@ -150,11 +156,9 @@ Move between windows with =C-h/j/k/l= in normal/visual/motion states, mirroring 
 ** Window Zoom Toggle: SPC w z
 
 Toggle a focused single-window view without destroying the layout. Saves the window configuration, switches to a single window, and restores on second call.
-
 #+begin_src emacs-lisp
 (defvar my/window-zoom--saved-config nil
   "Saved window configuration before zooming in.")
-
 (defun my/toggle-window-zoom ()
   "Toggle focused single-window view, preserving the window layout."
   (interactive)
@@ -164,7 +168,6 @@ Toggle a focused single-window view without destroying the layout. Saves the win
         (setq my/window-zoom--saved-config nil))
     (setq my/window-zoom--saved-config (current-window-configuration))
     (delete-other-windows)))
-
 (map! :leader :desc "Zoom/unzoom window" "w z" #'my/toggle-window-zoom)
 #+end_src
 
@@ -197,16 +200,13 @@ Display line numbers in programming and text modes.
 
 Enable soft-wrapping for notes, and make Evil `j`/`k` move by *visual* (screen) lines
 when lines wrap.
-
 #+begin_src emacs-lisp
 ;; Prefer Emacs' visual line wrapping for prose/note-taking.
 (add-hook 'text-mode-hook #'visual-line-mode)
 (add-hook 'org-mode-hook  #'visual-line-mode)
-
 ;; Make Evil motions follow wrapped (screen) lines.
 (after! evil
   (setq evil-respect-visual-line-mode t)
-
   ;; Like common Neovim setups: j/k => visual lines, gj/gk => logical lines.
   (map! :map evil-motion-state-map
         "j"  #'evil-next-visual-line
@@ -922,6 +922,160 @@ All org-roam related keybindings are under the =SPC n= prefix.
         :desc "Capture new node" "n c" #'org-roam-capture)
 #+end_src
 
+** Org-Roam Link Hover (K)
+
+Pressing =K= on an =[[id:...]]=  link shows a floating preview of the linked
+node's section content (via eldoc-box). Pressing =K= again follows the link.
+Falls through to normal =K= behaviour when not on an org-roam link.
+#+begin_src emacs-lisp
+(defvar +org-roam--box-was-open nil
+  "Non-nil when the org-roam hover frame was shown on the last K press.")
+(defun +org-roam-link-at-point ()
+  "Return the id: link element at point, or nil if not on one."
+  (when (derived-mode-p 'org-mode)
+    (let ((ctx (org-element-context)))
+      (when (and (eq (org-element-type ctx) 'link)
+                 (equal (org-element-property :type ctx) "id"))
+        ctx))))
+(defun +org-roam--plain-text (str)
+  "Strip org syntax from STR, returning lightly-formatted text for hover display.
+Headings are bolded. Code spans use a monospace face. Quotes get a │ prefix.
+/Italics/ are italicised. Everything else is plain."
+  (let ((lines (split-string str "\n"))
+        (in-quote nil)
+        result)
+    (dolist (line lines)
+      (cond
+       ;; #+begin_quote → enter quote mode (drop the marker line)
+       ((string-match-p "^#\\+begin_quote" line)
+        (setq in-quote t))
+       ;; #+end_quote → exit quote mode (drop the marker line)
+       ((string-match-p "^#\\+end_quote" line)
+        (setq in-quote nil))
+       ;; Other #+KEYWORD lines — drop entirely
+       ((string-match-p "^#\\+" line))
+       ;; :PROPERTIES: / :KEY: val / :END: — drop
+       ((string-match-p "^\\s-*:[A-Z_]+:" line))
+        ;; Headings: strip links, then bold
+        ((string-match "^\\(\\*+\\) +\\(.*\\)" line)
+         (let* ((text (match-string 2 line))
+                ;; [[id:...][desc]] → desc
+                (text (replace-regexp-in-string
+                       "\\[\\[id:[^]]+\\]\\[\\([^]]+\\)\\]\\]" "\\1" text))
+                ;; bare [[id:...]] → remove
+                (text (replace-regexp-in-string "\\[\\[id:[^]]+\\]\\]" "" text))
+                ;; [[anything][desc]] → desc
+                (text (replace-regexp-in-string
+                       "\\[\\[[^]]+\\]\\[\\([^]]+\\)\\]\\]" "\\1" text)))
+           (push (propertize (string-trim text) 'face 'bold) result)
+           (push "" result)))
+       ;; All other lines (normal text or inside a quote block)
+       (t
+        (let ((s line))
+          ;; [[id:...][desc]] → desc
+          (setq s (replace-regexp-in-string
+                   "\\[\\[id:[^]]+\\]\\[\\([^]]+\\)\\]\\]" "\\1" s))
+          ;; [[id:...]] bare → remove
+          (setq s (replace-regexp-in-string "\\[\\[id:[^]]+\\]\\]" "" s))
+          ;; [[anything][desc]] → desc
+          (setq s (replace-regexp-in-string
+                   "\\[\\[[^]]+\\]\\[\\([^]]+\\)\\]\\]" "\\1" s))
+          ;; =code= and ~verbatim~ → monospace face
+          (setq s (replace-regexp-in-string
+                   "[=~]\\([^=~\n]+\\)[=~]"
+                   (lambda (m)
+                     (propertize (match-string 1 m) 'face 'fixed-pitch))
+                   s))
+          ;; *bold* → bold
+          (setq s (replace-regexp-in-string
+                   "\\*\\([^*\n]+\\)\\*"
+                   (lambda (m)
+                     (propertize (match-string 1 m) 'face 'bold))
+                   s))
+          ;; /italic/ → italic face
+          (setq s (replace-regexp-in-string
+                   "/\\([^/\n]+\\)/"
+                   (lambda (m)
+                     (propertize (match-string 1 m) 'face 'italic))
+                   s))
+          ;; _underline_ → strip markers, keep text
+          (setq s (replace-regexp-in-string "_\\([^_\n]+\\)_" "\\1" s))
+          ;; Quote block lines get a │ prefix
+          (when in-quote
+            (setq s (concat (propertize "│ " 'face 'shadow) s)))
+          (push s result)))))
+    ;; Reverse (we pushed), join, collapse excess blank lines
+    (let ((out (string-join (nreverse result) "\n")))
+      (setq out (replace-regexp-in-string "\n\n\n+" "\n\n" out))
+      (string-trim out))))
+(defun +org-roam-file-preview (file &optional n-lines)
+  "Return the first N-LINES (default 20) of plain-text content from FILE.
+Skips #+KEYWORD preamble and property drawers, strips org markup."
+  (let ((n (or n-lines 20)))
+    (org-roam-with-temp-buffer file
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       ;; Skip #+KEYWORD lines and blank lines at top
+       (while (and (not (eobp))
+                   (looking-at-p "^\\(#\\+\\|$\\|:PROPERTIES:\\)"))
+         (if (looking-at-p "^:PROPERTIES:")
+             (re-search-forward "^:END:\n?" nil t)
+           (forward-line 1)))
+       (let* ((beg (point))
+              (end (save-excursion (forward-line n) (point)))
+              (raw (buffer-substring-no-properties beg end)))
+         (+org-roam--plain-text raw))))))
+(defun +org-roam-K-at-point (_identifier)
+  "Hover-preview the org-roam node linked at point via eldoc-box.
+First K: show a floating preview of the linked heading's section.
+          For file-level nodes, shows the first lines of content.
+Second K: follow the link (like RET).
+Returns nil when point is not on an id: link, allowing fallthrough."
+  (when-let ((link (+org-roam-link-at-point)))
+    (if +org-roam--box-was-open
+        (progn
+          (setq +org-roam--box-was-open nil)
+          (eldoc-box-quit-frame)
+          (org-open-at-point))
+      (let* ((id   (org-element-property :path link))
+             (node (org-roam-node-from-id id))
+             (loc  (org-id-find id)))
+        (if (not loc)
+            (user-error "org-roam: can't find node %s" id)
+          (let* ((file  (car loc))
+                 (pt    (cdr loc))
+                 (title (if node (org-roam-node-title node) id))
+                 (level (if node (org-roam-node-level node) 1))
+                 ;; File-level nodes (level 0): use first-lines preview.
+                 ;; Heading nodes (level > 0): use the section content.
+                 ;; Both are stripped to plain text.
+                 (body  (if (= level 0)
+                            (+org-roam-file-preview file)
+                          (+org-roam--plain-text
+                           (or (org-roam-preview-get-contents file pt) ""))))
+                 (str   (concat (propertize title 'face 'bold) "\n\n"
+                                (if (or (null body) (string-empty-p body))
+                                    "(no preview available)"
+                                  body))))
+            (setq +org-roam--box-was-open t)
+            (advice-add 'eldoc-box-quit-frame :after
+                        (lambda (&rest _) (setq +org-roam--box-was-open nil))
+                        '((name . +org-roam--reset-box-flag)))
+            (let ((eldoc-box-position-function
+                   eldoc-box-at-point-position-function))
+              (eldoc-box--display str))
+            ;; Mirror what eldoc-box-help-at-point does: record point and
+            ;; start the cleanup timer so the frame dismisses on movement.
+            (setq eldoc-box--help-at-point-last-point (point))
+            (run-with-timer 0.1 nil #'eldoc-box--help-at-point-cleanup)
+            (when eldoc-box-clear-with-C-g
+              (advice-add #'keyboard-quit :before #'eldoc-box-quit-frame))))))
+    t))
+(after! (org-roam eldoc-box)
+  (set-lookup-handlers! 'org-mode
+    :documentation #'+org-roam-K-at-point))
+#+end_src
+
 ** Buffer Navigation
 
 Keybindings for cycling through buffers with Alt+Shift+H/L.
@@ -935,13 +1089,11 @@ We need to unbind evil-org-mode's bindings which override the global ones.
   (map! :map evil-org-mode-map
         :nvi "M-H" nil
         :nvi "M-L" nil))
-
 (defun +my/workspace-buffer-list ()
   "Return the current workspace's buffer list, falling back to all buffers."
   (if (fboundp '+workspace-buffer-list)
       (+workspace-buffer-list)
     (buffer-list)))
-
 (defun +my/workspace-next-buffer ()
   "Switch to the next buffer in the current workspace (wraps around)."
   (interactive)
@@ -952,7 +1104,6 @@ We need to unbind evil-org-mode's bindings which override the global ones.
                    (nth (mod (1+ idx) (length buffers)) buffers)
                  (car buffers))))
     (when next (switch-to-buffer next))))
-
 (defun +my/workspace-previous-buffer ()
   "Switch to the previous buffer in the current workspace (wraps around)."
   (interactive)
@@ -963,7 +1114,6 @@ We need to unbind evil-org-mode's bindings which override the global ones.
                    (nth (mod (1- idx) (length buffers)) buffers)
                  (car buffers))))
     (when prev (switch-to-buffer prev))))
-
 ;; Now set our buffer navigation bindings
 (map! :nvi "M-H" #'+my/workspace-previous-buffer
       :nvi "M-L" #'+my/workspace-next-buffer)
@@ -997,6 +1147,8 @@ Helper function to mark a lecture as processed and move it from =raw/= to =proce
 
 Use =consult-fd= for live, telescope-like file finding without caching.
 #+begin_src emacs-lisp
+;; SPC e - Open/toggle Treemacs file explorer
+(map! :leader :desc "Open Treemacs" "e" #'+treemacs/toggle)
 ;; SPC SPC - Find file in current project/directory (fast)
 (map! :leader :desc "Find file (project)" "SPC" #'consult-fd)
 ;; SPC f f - Find file from home directory (fast, can type / for root)
@@ -1146,10 +1298,8 @@ Doom's java module doesn't auto-enable eglot when using =(lsp +eglot)=, so we ad
                 ;; Enable eldoc for hover info (Shift-K)
                 (setq eldoc-echo-area-use-multiline-p t)
                 (eldoc-mode 1)))))
-
 ;; Add hook to auto-start eglot in java-mode
 (add-hook 'java-mode-hook #'eglot-ensure)
-
 ;; eldoc-box: floating child frame popup for hover docs (VS Code-style Shift-K)
 (use-package! eldoc-box
   :config
@@ -1157,7 +1307,6 @@ Doom's java module doesn't auto-enable eglot when using =(lsp +eglot)=, so we ad
         eldoc-box-max-pixel-height 400
         eldoc-box-clear-with-C-g t
         eldoc-box-cleanup-interval 0.5))
-
 ;; Override Doom's +eglot-lookup-documentation with a toggle:
 ;; - First K  → floating eldoc-box child frame
 ;; - Second K → dismiss frame, open the classic *eglot-help* split (Doom's
@@ -1167,7 +1316,6 @@ Doom's java module doesn't auto-enable eglot when using =(lsp +eglot)=, so we ad
 (after! (eglot eldoc-box)
   (defvar +eglot--help-box-was-open nil
     "Non-nil when eldoc-box child frame was shown on last K press.")
-
   (defun +eglot-lookup-documentation (_identifier)
     "Show hover docs via eldoc-box. Press K again to open the classic help split."
     (if +eglot--help-box-was-open
@@ -1258,7 +1406,6 @@ Copilot is NOT started automatically - toggle it per-buffer with =SPC o l t=.
   (after! evil
     (evil-define-key 'insert 'global (kbd "<tab>") #'my/copilot-tab-or-default)
     (evil-define-key 'insert 'global (kbd "TAB") #'my/copilot-tab-or-default)))
-
 ;; Keybinding to toggle copilot (similar to gptel workflow)
 (map! :leader
       :desc "Toggle Copilot" "o l t" #'copilot-mode)
@@ -1274,8 +1421,8 @@ GPTel provides AI assistance directly in Emacs with multiple presets optimized f
 #+begin_src emacs-lisp
 (use-package! gptel
   :config
-  ;; Default to Haiku for quick queries
-  (setq gptel-model 'claude-haiku-4.5
+  ;; Default model for gptel-send and general use
+  (setq gptel-model 'gpt-5-mini
         gptel-backend (gptel-make-gh-copilot "Copilot")
         gptel-default-mode 'org-mode)
   
@@ -1455,6 +1602,16 @@ Only return the commit message. No meta-commentary."))
       :desc "Writing (5-mini)" "o l w" #'my/gptel-writing
       :desc "Config (Sonnet)" "o l g" #'my/gptel-configuring
       :desc "Quick (Haiku)" "o l q" #'my/gptel-quick)
+
+;; gptel-rewrite: disable tools so the model returns plain text instead of a tool call.
+;; The actual request is fired by gptel--suffix-rewrite (gptel-rewrite is just the transient menu).
+(after! gptel-rewrite
+  (defun my/gptel-rewrite-no-tools (orig-fn &rest args)
+    (let ((gptel-use-tools nil)
+          (gptel-model 'gpt-4.1)
+          (gptel-backend (gptel-make-gh-copilot "Copilot")))
+      (apply orig-fn args)))
+  (advice-add 'gptel--suffix-rewrite :around #'my/gptel-rewrite-no-tools))
 #+end_src
 
 ** GPTel Agent
@@ -2182,6 +2339,23 @@ Configure pdf-tools for viewing PDF files in Emacs.
   (setq pdf-view-continuous t))
 #+end_src
 
+* EPUB Configuration
+
+Configure nov.el for reading EPUB files in Emacs. EPUBs are zip files, so
+archive-mode would normally claim them via magic bytes before auto-mode-alist
+runs. We strip any archive-mode epub entry and rely on auto-mode-alist instead.
+#+begin_src emacs-lisp
+(use-package! nov
+  :init
+  (add-to-list 'auto-mode-alist '("\\.epub\\'" . nov-mode))
+  :config
+  (setq auto-mode-alist
+        (seq-remove (lambda (x) (and (stringp (car x))
+                                     (string-match-p "\\.epub" (car x))
+                                     (eq (cdr x) 'archive-mode)))
+                    auto-mode-alist)))
+#+end_src
+
 * Vterm Configuration
 
 Evil intercepts ESC globally before vterm can handle it.
@@ -2212,6 +2386,50 @@ Configure Circe for automatic authentication with Libera Chat using SASL.
 To connect to Libera Chat with automatic authentication, simply run:
 - =M-x circe RET Libera Chat RET=
 This will connect you to Libera Chat and automatically authenticate your account.
+
+* Emacs Everywhere
+
+Open a floating Emacs frame for editing in any application via =emacsclient --eval '(emacs-everywhere)'=.
+#+begin_src emacs-lisp
+(after! emacs-everywhere
+  ;; Frame size: width x height in characters
+  (setq emacs-everywhere-frame-parameters
+        '((name . "emacs-everywhere")
+          (width . 81)
+          (height . 48)))
+
+  ;; Center the frame on screen.
+  ;; Uses emacs-everywhere-init-hooks which runs inside the new frame.
+  (defun my/emacs-everywhere-center-frame ()
+    (let* ((dw (display-pixel-width))
+           (dh (display-pixel-height))
+           (f  (selected-frame))
+           (fw (frame-pixel-width f))
+           (fh (frame-pixel-height f)))
+      (set-frame-position f (/ (- dw fw) 2) (/ (- dh fh) 2))))
+  (add-hook 'emacs-everywhere-init-hooks #'my/emacs-everywhere-center-frame)
+
+  ;; Drop --sync from xdotool focus command to avoid blocking in dwm.
+  ;; Must be a list of strings, with %w as the window-id placeholder.
+  (setf (plist-get (alist-get 'x11 emacs-everywhere-system-configs) :focus-command)
+        '("xdotool" "windowactivate" "%w"))
+
+  ;; Always open in markdown-mode
+  (setq emacs-everywhere-major-mode-function #'markdown-mode)
+
+  ;; Small delay to ensure clipboard propagates before paste.
+  (setq emacs-everywhere-clipboard-sleep-delay 0.15)
+
+  ;; If the buffer is killed by any means other than C-c C-c / C-c C-k
+  ;; (e.g. :q, ZZ), abort cleanly so the daemon doesn't hang.
+  ;; Guard: only act when this specific frame owns the emacs-everywhere session.
+  (defun my/emacs-everywhere-abort-on-kill ()
+    (when (and emacs-everywhere-mode
+               (frame-parameter nil 'emacs-everywhere-app))
+      (let ((emacs-everywhere-mode nil)) ; prevent re-entrant abort loop
+        (emacs-everywhere-finish t))))
+  (add-hook 'kill-buffer-hook #'my/emacs-everywhere-abort-on-kill))
+#+end_src
 <!-- Local Variables: -->
 <!-- gptel-model: gpt-5-mini -->
 <!-- gptel--backend-name: "Copilot" -->

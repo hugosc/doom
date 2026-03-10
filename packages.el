@@ -80,6 +80,9 @@
 ;; Better agenda grouping
 (package! org-super-agenda)
 
+;; Org Pomodoro
+(package! org-pomodoro)
+
 ;; AI Integration: Copilot
 (package! copilot
   :recipe (:host github :repo "copilot-emacs/copilot.el" :files ("*.el")))
@@ -89,3 +92,6 @@
 
 ;; Floating child frame popup for eldoc/hover docs (VS Code-style Shift-K)
 (package! eldoc-box)
+
+;; EPUB reader
+(package! nov)
