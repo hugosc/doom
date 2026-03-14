@@ -5,7 +5,12 @@
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  '(custom-safe-themes
-   '("f1e8339b04aef8f145dd4782d03499d9d716fdc0361319411ac2efc603249326" default))
+   '("9e5e0ff3a81344c9b1e6bfc9b3dcf9b96d5ec6a60d8de6d4c762ee9e2121dfb2"
+     "3613617b9953c22fe46ef2b593a2e5bc79ef3cc88770602e7e569bbd71de113b"
+     "8c7e832be864674c220f9a9361c851917a93f921fedb7717b1b5ece47690c098"
+     "2f8af2a3a2fae6b6ea254e7aab6f3a8b5c936428b67869cef647c5f8e7985877"
+     "1f8bd4db8280d5e7c5e6a12786685a7e0c6733b0e3cf99f839fb211236fb4529"
+     "f1e8339b04aef8f145dd4782d03499d9d716fdc0361319411ac2efc603249326" default))
  '(ibuffer-saved-filter-groups
    '(("org"
       ("Project: brain2"

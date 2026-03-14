@@ -1,0 +1,11 @@
+# -*- mode: snippet -*-
+# name: Org C Block (output)
+# uuid:
+# key: cblock
+# condition: t
+# --
+#+begin_src C :results output
+   #include <stdio.h>
+   int main() {
+   }
+#+end_src

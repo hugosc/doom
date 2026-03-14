@@ -1,5 +1,122 @@
 #+TITLE: Doom Emacs Configuration
 #+AUTHOR: Crocodile
+** Yasnippet: Force C-TAB to Expand Only Snippets
+
+I want C-TAB (Ctrl+Tab) to always expand yasnippet snippets in org-mode, never Copilot/company or anything else. This gives me granular control: TAB for Copilot/company, C-TAB for snippets.
+
+#+begin_src emacs-lisp
+(map! :map org-mode-map
+      "<C-tab>" #'yas-expand)
+#+end_src
+
+If you use auto-yasnippet (aya), it was previously on C-TAB. You can rebind it if needed:
+#+begin_src emacs-lisp
+;; Robustly rebind C-TAB variants to yas-expand and remove aya/copilot bindings
+(dolist (k '("<C-tab>" "C-<tab>" "<C-iso-lefttab>" "<C-TAB>"))
+  (let ((key (kbd k)))
+    ;; remove from known minor/keymaps that may capture it
+    (when (boundp 'aya-mode-map) (define-key aya-mode-map key nil))
+    (when (boundp 'copilot-completion-map) (define-key copilot-completion-map key nil))
+    (define-key (current-global-map) key nil)
+    ;; set in org-mode local map and evil insert map for typing context
+    (define-key org-mode-map key #'yas-expand)
+    (when (boundp 'evil-insert-state-map)
+      (define-key evil-insert-state-map key #'yas-expand))))
+
+;; Show effective bindings for debugging
+(message "C-TAB effective bindings: %S %S %S"
+         (key-binding (kbd "<C-tab>"))
+         (key-binding (kbd "C-<tab>"))
+         (key-binding (kbd "<C-iso-lefttab>")))
+#+end_src
+
+#+begin_src emacs-lisp
+;; More robust force-expand for yasnippet while completion UIs are active.
+(defun my/force-yas-expand ()
+  "Abort completion popups and force a yasnippet expansion at/near point.
+Tries, in order:
+  1. yas-expand at point
+  2. yas-expand at the end of the nearest preceding symbol
+  3. scan backwards for a preceding symbol and try expanding there
+This tries to survive Corfu/Company/Copilot overlays that steal keys or move point."
+  (interactive)
+  (let ((expanded nil)
+        (orig-point (point)))
+    ;; Abort/close common completion UIs (best-effort)
+    (when (and (boundp 'company-mode) (fboundp 'company--active-p) (company--active-p))
+      (ignore-errors (company-abort)))
+    (when (and (boundp 'corfu-mode) (fboundp 'corfu-quit))
+      (ignore-errors (corfu-quit)))
+    ;; Copilot/ghost overlays: try known cleanup functions (best-effort)
+    (when (bound-and-true-p copilot-mode)
+      (cond
+       ((fboundp 'copilot-clear-overlay) (ignore-errors (copilot-clear-overlay)))
+       ((fboundp 'copilot--dismiss)     (ignore-errors (copilot--dismiss)))
+       ((fboundp 'copilot-complete)     (ignore-errors (copilot-complete)))))
+    ;; 1) Try expanding at point
+    (when (fboundp 'yas-expand)
+      (setq expanded (condition-case _ (yas-expand) (error nil))))
+    ;; 2) If not expanded, try the end of the current/previous symbol
+    (unless expanded
+      (save-excursion
+        (let ((end (point)))
+          (skip-chars-backward "A-Za-z0-9_-")
+          (when (< (point) end)
+            (goto-char end)
+            (setq expanded (condition-case _ (yas-expand) (error nil)))))))
+    ;; 3) If still not expanded, scan backwards for a candidate symbol and try expanding there
+    (unless expanded
+      (save-excursion
+        (when (search-backward-regexp "\\_<[A-Za-z0-9_+-]+\\_>" nil t)
+          (goto-char (match-end 0))
+          (setq expanded (condition-case _ (yas-expand) (error nil))))))
+    (unless expanded
+      (goto-char orig-point)           ; restore point if we moved
+      (message "my/force-yas-expand: no snippet expansion found"))
+    expanded))
+
+;; Bind the function into known completion/overlay maps so it wins when popups are active
+(dolist (m '(company-active-map
+             company-mode-map
+             corfu-map
+             corfu-popupinfo-map
+             copilot-completion-map
+             aya-mode-map))
+  (when (and (boundp m) (keymapp (symbol-value m)))
+    (define-key (symbol-value m) (kbd "<C-tab>") #'my/force-yas-expand)
+    (define-key (symbol-value m) (kbd "C-<tab>") #'my/force-yas-expand)))
+
+;; Ensure global C-TAB uses my/force-yas-expand to override aya-create
+(when (fboundp 'my/force-yas-expand)
+  (define-key (current-global-map) (kbd "<C-tab>") #'my/force-yas-expand)
+  (define-key (current-global-map) (kbd "C-<tab>") #'my/force-yas-expand)
+  ;; Remove aya global/minor binding if present
+  (when (boundp 'aya-mode-map) (define-key aya-mode-map (kbd "<C-tab>") nil))
+  (when (boundp 'copilot-completion-map) (define-key copilot-completion-map (kbd "<C-tab>") nil)))
+
+;; Ensure our C-TAB binding wins even when minor modes are active by using
+;; `minor-mode-overriding-map-alist` entries for the noisy completion minor modes.
+(dolist (mode '(aya-mode copilot-mode company-mode corfu-mode))
+  (let* ((sym mode)
+         (ov (alist-get sym minor-mode-overriding-map-alist))
+         (map (or (and (keymapp ov) ov) (make-sparse-keymap))))
+    (define-key map (kbd "<C-tab>") #'my/force-yas-expand)
+    (define-key map (kbd "C-<tab>") #'my/force-yas-expand)
+    (setf (alist-get sym minor-mode-overriding-map-alist) map)))
+
+;; Also ensure org-mode and insert-state use it
+(define-key org-mode-map (kbd "<C-tab>") #'my/force-yas-expand)
+(when (boundp 'evil-insert-state-map)
+  (define-key evil-insert-state-map (kbd "<C-tab>") #'my/force-yas-expand))
+#+end_src
+
+Evaluate the block (place point inside it and press C-c C-c) to apply immediately, or run M-x doom/reload to apply persistently.
+You can evaluate the block (place point inside it and press C-c C-c) to apply immediately, or reload Doom with M-x doom/reload to apply on startup.
+
+#+begin_src emacs-lisp
+(map! :map org-mode-map
+      "C-c a" #'aya-create)  ;; or any key you prefer
+#+end_src
 #+PROPERTY: header-args :tangle yes :cache yes :results silent :padline no
 
 * Table of Contents :TOC:
@@ -159,15 +276,28 @@ Toggle a focused single-window view without destroying the layout. Saves the win
 #+begin_src emacs-lisp
 (defvar my/window-zoom--saved-config nil
   "Saved window configuration before zooming in.")
+
+(defvar my/window-zoom--zoomed-window nil
+  "The window that was zoomed, to detect if we're still in zoom state.")
+
 (defun my/toggle-window-zoom ()
   "Toggle focused single-window view, preserving the window layout."
   (interactive)
-  (if my/window-zoom--saved-config
+  (if (and my/window-zoom--saved-config
+           (eq (selected-window) my/window-zoom--zoomed-window)
+           (= (length (window-list)) 1))
+      ;; We're zoomed in and still in the same window - restore
       (progn
         (set-window-configuration my/window-zoom--saved-config)
-        (setq my/window-zoom--saved-config nil))
-    (setq my/window-zoom--saved-config (current-window-configuration))
-    (delete-other-windows)))
+        (setq my/window-zoom--saved-config nil
+              my/window-zoom--zoomed-window nil)
+        (message "Unzoomed"))
+    ;; Either not zoomed, or state is stale - zoom in
+    (setq my/window-zoom--saved-config (current-window-configuration)
+          my/window-zoom--zoomed-window (selected-window))
+    (delete-other-windows)
+    (message "Zoomed")))
+
 (map! :leader :desc "Zoom/unzoom window" "w z" #'my/toggle-window-zoom)
 #+end_src
 
@@ -1359,8 +1489,6 @@ Copilot is NOT started automatically - toggle it per-buffer with =SPC o l t=.
   :bind (:map copilot-completion-map
               ("<tab>" . 'copilot-accept-completion)
               ("TAB" . 'copilot-accept-completion)
-              ("C-TAB" . 'copilot-accept-completion-by-word)
-              ("C-<tab>" . 'copilot-accept-completion-by-word)
               ("M-f" . 'copilot-accept-completion-by-word)
               ("M-n" . 'copilot-next-completion)
               ("M-p" . 'copilot-previous-completion))
@@ -1406,6 +1534,18 @@ Copilot is NOT started automatically - toggle it per-buffer with =SPC o l t=.
   (after! evil
     (evil-define-key 'insert 'global (kbd "<tab>") #'my/copilot-tab-or-default)
     (evil-define-key 'insert 'global (kbd "TAB") #'my/copilot-tab-or-default)))
+  ;; Prevent Copilot from using C-TAB so our global C-TAB (yas) takes precedence.
+  ;; Set Copilot's completion map C-TAB to our force-yas-expand function.
+  (when (boundp 'copilot-completion-map)
+    (define-key copilot-completion-map (kbd "<C-tab>") #'my/force-yas-expand)
+    (define-key copilot-completion-map (kbd "C-<tab>") #'my/force-yas-expand))
+  ;; Also defensively remove other C-TAB variants and override the "accept by word"
+  ;; function so C-TAB cannot accept completions even if Copilot tries to handle it.
+  (when (boundp 'copilot-completion-map)
+    (dolist (k '("C-TAB" "C-<tab>" "<C-tab>"))
+      (define-key copilot-completion-map (kbd k) #'my/force-yas-expand)))
+  (when (fboundp 'copilot-accept-completion-by-word)
+    (advice-add 'copilot-accept-completion-by-word :override #'my/force-yas-expand))
 ;; Keybinding to toggle copilot (similar to gptel workflow)
 (map! :leader
       :desc "Toggle Copilot" "o l t" #'copilot-mode)
@@ -2330,13 +2470,47 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
 
 * PDF Configuration
 
-Configure pdf-tools for viewing PDF files in Emacs.
+Configure pdf-tools for viewing PDF files in Emacs with manual page navigation.
+- =j/k= scroll line-by-line within current page (stops at edges, won't auto-turn)
+- =C-d/C-u= change pages manually
 #+begin_src emacs-lisp
 (use-package! pdf-tools
   :mode ("\\.pdf\\'" . pdf-view-mode)
   :config
   (pdf-tools-install)
-  (setq pdf-view-continuous t))
+
+  ;; Disable automatic page turning when reaching page edges so j/k
+  ;; only scroll inside the current page.
+  (setq pdf-view-continuous nil)
+
+  ;; Custom line-by-line scroll functions that don't auto-turn pages.
+  ;; Use image-next-line / image-previous-line which are provided by
+  ;; image-mode/pdf-view and won't trigger page advancement.
+  (defun my/pdf-view-scroll-down-line ()
+    "Scroll PDF down by one line without auto page turn."
+    (interactive)
+    (image-next-line 1))
+
+  (defun my/pdf-view-scroll-up-line ()
+    "Scroll PDF up by one line without auto page turn."
+    (interactive)
+    (image-previous-line 1))
+  
+  ;; Configure Evil keybindings for pdf-view mode
+  (after! evil
+    (evil-define-key 'normal pdf-view-mode-map
+      ;; Line-by-line scrolling: j/k (stops at page boundaries)
+      "j" #'my/pdf-view-scroll-down-line
+      "k" #'my/pdf-view-scroll-up-line
+      ;; Page navigation: C-d (next), C-u (prev)
+      "C-d" #'pdf-view-next-page-command
+      "C-u" #'pdf-view-previous-page-command
+      ;; Alternative page navigation
+      "J" #'pdf-view-next-page-command
+      "K" #'pdf-view-previous-page-command
+      ;; Jump to first/last page
+      "g g" #'pdf-view-first-page
+      "G" #'pdf-view-last-page)))
 #+end_src
 
 * EPUB Configuration
