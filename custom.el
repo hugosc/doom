@@ -37,11 +37,13 @@
      (sequence "|" "OKAY(o)" "YES(y)" "NO(n)")))
  '(package-selected-packages
    '(agent-shell ample-theme blackjack cacao-theme darktooth-theme gptel-agent
-     kuronami-theme labburn-theme nov org-pomodoro punpun-themes sublime-themes
-     sunburn-theme warm-night-theme)))
+     kuronami-theme labburn-theme mentor nov org-pomodoro punpun-themes
+     sublime-themes sunburn-theme warm-night-theme))
+ '(pdf-view-use-scaling nil))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  )
+(put 'narrow-to-region 'disabled nil)
