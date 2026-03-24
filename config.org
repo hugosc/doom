@@ -2225,11 +2225,11 @@ Simple, clean formatting for org files:
             (file+olp "~/Documents/brain2/inbox.org" "This Week")
             "** TODO %?\n"
             :empty-lines 1)
-           ("D" "Document (LaTeX export)" plain
-            "%?\n"
-            (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
-                       "#+TITLE: %^{Title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %^{Date|%<%Y-%m-%d>}\n#+FILETAGS: :document:\n#+LATEX_CLASS: %^{LaTeX class|essay|article|report}\n#+OPTIONS: toc:%^{TOC|nil|t} num:%^{num|nil|t}\n")
-             :unnarrowed t)))
+            ("D" "Document (LaTeX export)" plain
+             (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
+                        "#+TITLE: %^{Title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %^{Date|%<%Y-%m-%d>}\n#+FILETAGS: :document:\n#+LATEX_CLASS: %^{LaTeX class|essay|article|report}\n#+OPTIONS: toc:%^{TOC|nil|t} num:%^{num|nil|t}\n")
+             "%?\n"
+              :unnarrowed t)))
    
    ;; Define custom LaTeX export classes for essay, article, and report
    ;; These classes handle document formatting and margins site-wide
