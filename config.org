@@ -1346,7 +1346,9 @@ With DRY-RUN non-nil, only report what would change."
       (pcase-let ((`(,beg ,end ,src ,dest ,new-link) change))
         (setq converted (1+ converted))
         (unless dry-run
-          (copy-file src dest nil)
+          (unless (and (file-exists-p dest)
+                       (file-equal-p src dest))
+            (copy-file src dest t))
           (setq copied (1+ copied))
           (goto-char beg)
           (delete-region beg end)
