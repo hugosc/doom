@@ -93,20 +93,106 @@ Each heading with attachments gets its own directory.
 
 #+begin_src emacs-lisp
 (after! org-attach
-  ;; DISABLE inheritance - each heading gets its own attachment directory
-  ;; This allows multiple headings per daily note to have separate attachments
-  (setq org-attach-use-inheritance nil)
-  ;; Store attachments in .attach/ subdirectory (Doom default)
-  (setq org-attach-id-dir ".attach/")
-  ;; Use UUID folder format: first 2 chars as parent dir, rest as subdirectory
-  (setq org-attach-id-to-path-function-list 
+  ;; Keep org-attach available for existing legacy attachment: links.
+  (setq org-attach-use-inheritance t
+        ;; Keep Doom-style local .attach/ storage for legacy IDs.
+        org-attach-id-dir ".attach/"
+        org-attach-id-to-path-function-list
         '(org-attach-id-uuid-folder-format)))
-;; Configure org-download to work with heading-level attachments
+
+;; UUID-based attachment directory for each note (matches org-roam top-level ID).
+(defun my/org-root-id (&optional file)
+  "Return top-level `:ID:` from FILE (or current buffer), if present."
+  (with-current-buffer (or (and file (find-file-noselect file)) (current-buffer))
+    (save-excursion
+      (goto-char (point-min))
+      (let ((limit (save-excursion
+                     (if (re-search-forward "^\\*+ " nil t)
+                         (match-beginning 0)
+                       (point-max)))))
+        (when (re-search-forward "^[ \t]*:ID:[ \t]*\\(.+\\)$" limit t)
+          (string-trim (match-string-no-properties 1)))))))
+
+(defun my/org-file-attach-dir (&optional file)
+  "Return FILE's attachment directory based on top-level note ID.
+Falls back to `.attach/<file-base>/` only if no top-level ID exists."
+  (let* ((f (or file (buffer-file-name)
+                (user-error "Current buffer is not visiting a file")))
+         (dir (file-name-directory f))
+         (base (file-name-base f))
+         (root-id (my/org-root-id f)))
+    (if root-id
+        (let ((default-directory dir))
+          (org-attach-dir-from-id root-id))
+      (expand-file-name (concat ".attach/" base "/") dir))))
+
+(defun my/org-open-file-attach-dir ()
+  "Open this note's file-level attachment directory.
+This bypasses org-attach's ID-based lookup used by `SPC m a a f`."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (let ((dir (my/org-file-attach-dir buffer-file-name)))
+    (make-directory dir t)
+    (dired dir)))
+
+(defun my/org-setup-file-attach-dir-h ()
+  "Set `org-download-image-dir` buffer-locally to this note's attach dir."
+  (when (and (derived-mode-p 'org-mode) buffer-file-name)
+    (setq-local org-download-image-dir (my/org-file-attach-dir buffer-file-name))))
+
+(add-hook 'org-mode-hook #'my/org-setup-file-attach-dir-h)
+
+(defun my/org-move-file-attach-dir-if-needed ()
+  "Move old per-file attach dir into canonical dir when needed.
+Useful for notes created during transition from per-file-base naming."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (let* ((base (file-name-base buffer-file-name))
+         (dir (file-name-directory buffer-file-name))
+         (old (expand-file-name (concat ".attach/" base "/") dir))
+         (new (my/org-file-attach-dir buffer-file-name)))
+    (when (and (not (string-equal old new))
+               (file-directory-p old)
+               (not (file-exists-p new)))
+      (make-directory (file-name-directory new) t)
+      (rename-file old new)
+      (message "Moved attach dir: %s -> %s" old new))))
+
+(defun my/org-clean-empty-id-dirs-in-current-file ()
+  "Remove empty heading-ID attach dirs for current file.
+This keeps `.attach/` tidy after migrating to file-level attachments."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (let ((removed 0)
+        (base-dir (file-name-directory buffer-file-name))
+        (canonical (file-truename (my/org-file-attach-dir buffer-file-name))))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^[ \t]*:ID:[ \t]*\\(.+\\)$" nil t)
+        (let* ((id (string-trim (match-string-no-properties 1)))
+               (dir (let ((default-directory base-dir))
+                      (org-attach-dir-from-id id))))
+          (when (and dir
+                     (file-directory-p dir)
+                     (not (string-equal (file-truename dir) canonical))
+                     (null (directory-files dir nil "^[^.].*")))
+            (delete-directory dir)
+            (setq removed (1+ removed))))))
+    (message "Removed %d empty ID attachment dirs" removed)
+    removed))
+
+;; Configure org-download for file-based attachments + file: links.
 (after! org-download
-  ;; Don't organize by heading level - let org-attach handle the structure
-  (setq org-download-heading-lvl nil)
-  ;; Don't add annotations to image links
-  (setq org-download-annotate-function (lambda (_link) "")))
+  (setq org-download-method 'directory
+        org-download-heading-lvl nil
+        ;; Use plain file: links for predictable Org 9.8 preview toggling.
+        org-download-link-format "[[file:%s]]\n"
+        org-download-abbreviate-filename-function #'file-relative-name
+        ;; Don't add annotation lines above inserted links.
+        org-download-annotate-function (lambda (_link) "")))
 #+end_src
 
 ** Emacs Server
@@ -156,7 +242,8 @@ Move between windows with =C-h/j/k/l= in normal/visual/motion states, mirroring 
   (map! :nvm "C-h" #'evil-window-left
         :nvm "C-j" #'evil-window-down
         :nvm "C-k" #'evil-window-up
-        :nvm "C-l" #'evil-window-right))
+        :nvm "C-l" #'evil-window-right
+        :nm  "L"   #'evil-end-of-line))
 #+end_src
 
 ** Window Zoom Toggle: SPC w z
@@ -390,7 +477,23 @@ Rules:
       (my/org--ensure-blank-line-before (match-beginning 0)))
     (goto-char (point-min))
     (while (re-search-forward "^[ \t]*#\\+END_SRC" nil t)
-      (my/org--ensure-blank-line-after (match-end 0)))))
+      (let ((end-pos (match-end 0)))
+        (save-excursion
+          (goto-char end-pos)
+          (forward-line 1)
+          (unless (or (eobp)
+                      (looking-at-p "^[ \t]*$")
+                      (looking-at-p "^[ \t]*/.+/[ \t]*$"))
+            (insert "\n")))))))
+
+(defun my/org-format-buffer-on-save ()
+  "Run org formatter on save, with a safe fallback during init." 
+  (when (derived-mode-p 'org-mode)
+    (if (fboundp 'my/org-format-buffer)
+        (my/org-format-buffer)
+      (progn
+        (my/org-add-blank-lines-around-src-blocks)
+        (my/org-ensure-blank-lines-between-paragraphs)))))
 
 ;; Org Mode hook: visual-line-mode + buffer-local before-save enforcement
 (add-hook 'org-mode-hook
@@ -400,9 +503,11 @@ Rules:
             ;; Do not turn on auto-fill: keep soft wrapping and control paragraph breaks with blank lines
             (when (boundp 'auto-fill-function) (turn-off-auto-fill))
 
-            ;; Make sure our helpers run only for this buffer on save
-            (add-hook 'before-save-hook #'my/org-add-blank-lines-around-src-blocks nil t)
-            (add-hook 'before-save-hook #'my/org-ensure-blank-lines-between-paragraphs nil t)))
+            ;; Use one formatter entrypoint to avoid overlapping spacing passes
+            (remove-hook 'before-save-hook #'my/org-add-blank-lines-around-src-blocks t)
+            (remove-hook 'before-save-hook #'my/org-ensure-blank-lines-between-paragraphs t)
+            (remove-hook 'before-save-hook #'my/org-format-buffer-on-save t)
+            (add-hook 'before-save-hook #'my/org-format-buffer-on-save nil t)))
 
 ;; Also ensure newly-inserted src blocks get spacing immediately
 (with-eval-after-load 'ob
@@ -693,6 +798,7 @@ My capture templates support different types of content in my knowledge system:
 - *Concepts* (=c=): Atomic concept nodes with definition, context, relations
 - *Readings* (=rd=): Paper/book notes with citations
 - *Recipes* (=r=): Recipe notes with ingredients and procedures
+- *Documents* (=d=): LaTeX-backed document nodes with class presets
 - *Assignments* (=a=): Coursework planning and tracking
 - *Projects* (=p=): Personal project overviews
 
@@ -716,6 +822,27 @@ My capture templates support different types of content in my knowledge system:
            ("r" "Recipe" plain
             "* Ingredients\n\n- \n\n* Prep\n\n- \n\n* Procedure\n\n1. \n\n* Notes\n\n%?"
             :if-new (file+head "recipes/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :recipe:\n")
+            :unnarrowed t)
+           ("d" "Document templates")
+           ("de" "Essay document" plain
+            "%?"
+            :if-new (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
+                               "#+TITLE: ${title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %<%Y-%m-%d>\n#+FILETAGS: :document:essay:\n#+LATEX_CLASS: essay\n#+OPTIONS: toc:nil num:nil\n")
+            :unnarrowed t)
+           ("da" "Article document" plain
+            "%?"
+            :if-new (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
+                               "#+TITLE: ${title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %<%Y-%m-%d>\n#+FILETAGS: :document:article:\n#+LATEX_CLASS: article\n#+OPTIONS: toc:nil num:nil\n")
+            :unnarrowed t)
+           ("dr" "Report document" plain
+            "%?"
+            :if-new (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
+                               "#+TITLE: ${title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %<%Y-%m-%d>\n#+FILETAGS: :document:report:\n#+LATEX_CLASS: report\n#+OPTIONS: toc:t num:t\n")
+            :unnarrowed t)
+           ("db" "Book/chapter document" plain
+            "* Introduction\n\n%?"
+            :if-new (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
+                               "#+TITLE: ${title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %<%Y-%m-%d>\n#+FILETAGS: :document:book:\n#+LATEX_CLASS: report\n#+OPTIONS: toc:t num:t\n")
             :unnarrowed t)
           ("a" "Assignment plan" plain
            "* Brief\n%?\n* Requirements\n* Sources\n* Outline\n* Timeline\n* Status"
@@ -932,20 +1059,15 @@ Automatically detects clipboard content type and routes to appropriate handler.
 
 #+begin_src emacs-lisp
 (defun my/org-smart-image-paste ()
-  "Smart paste: handles clipboard image data and file:// URIs from Yazi.
-Detects if clipboard contains:
-- file:// URI (from Yazi) -> copy file to current heading's attachments (images, PDFs, etc)
-- Image data (screenshot) -> use org-download at current heading
-Works naturally with org-mode's heading-level attachment system.
-Each heading gets its own attachment directory."
+  "Smart paste for Org using note-level UUID attach dirs.
+Detects clipboard content and routes accordingly:
+- file:// URI (Yazi) -> copy file into this note's UUID attach dir and insert [[file:...]]
+- http(s) URL -> download via `org-download-image` into this file's attach dir
+- image data in clipboard -> `org-download-clipboard`
+All links inserted are file links, so inline toggling works with Org 9.8 previews."
   (interactive)
-  ;; Ensure we're in an org file
-  (unless (derived-mode-p 'org-mode)
-    (user-error "Must be in an org-mode buffer"))
-  ;; Check that we're somewhere under a heading (don't move cursor!)
-  (save-excursion
-    (unless (ignore-errors (org-back-to-heading t))
-      (user-error "Not in or under a heading")))
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
   (let* (;; Try to get clipboard text with timeout (2 seconds)
          (clipboard-text (condition-case nil
                             (with-timeout (2 nil)
@@ -954,108 +1076,314 @@ Each heading gets its own attachment directory."
                           (error nil)))
          ;; Check if clipboard contains file:// URI from Yazi
          (is-file-uri (and clipboard-text
-                          (not (string-empty-p clipboard-text))
-                          (string-prefix-p "file://" clipboard-text)))
+                           (not (string-empty-p clipboard-text))
+                           (string-prefix-p "file://" clipboard-text)))
          ;; Extract actual file path from URI
          (filepath (when is-file-uri
-                    (url-unhex-string (substring clipboard-text 7))))
-         ;; Validate it's a file we want to attach (images, PDFs, markdown, etc)
+                     (url-unhex-string (substring clipboard-text 7))))
+         ;; Detect web URL in clipboard
+         (is-web-url (and clipboard-text
+                          (not (string-empty-p clipboard-text))
+                          (string-match-p "^https?://" clipboard-text)))
+         ;; Validate local file from Yazi
          (is-valid-file (and filepath
-                             (file-exists-p filepath)
-                             (file-regular-p filepath)
-                             (member (downcase (or (file-name-extension filepath) ""))
-                                    '("png" "jpg" "jpeg" "gif" "webp" "bmp" "pdf" "md" "txt" "org")))))
+                              (file-exists-p filepath)
+                              (file-regular-p filepath)
+                              (member (downcase (or (file-name-extension filepath) ""))
+                                      '("png" "jpg" "jpeg" "gif" "webp" "bmp" "pdf" "md" "txt" "org")))))
     (cond
-     ;; Yazi file:// URI workflow (images, PDFs, docs)
-     (is-valid-file
-      (my/attach-file-from-yazi filepath))
-     ;; Screenshot workflow - try org-download with error handling
-     (t
-      (condition-case err
-          (my/paste-screenshot-naturally)
-        (error
-         (user-error "No image found in clipboard. Please copy an image (screenshot) or file from Yazi first. Error: %s" 
-                     (error-message-string err))))))))
-(defun my/attach-file-from-yazi (filepath)
-  "Attach file from Yazi to current heading using org-attach.
-Handles images, PDFs, and documents. Creates heading ID and :ATTACH: tag if needed."
-  (save-excursion
-    ;; Ensure we're at the heading
-    (org-back-to-heading t)
-    (let* ((filename (file-name-nondirectory filepath))
-           (timestamp (format-time-string "_%Y%m%d_%H%M%S"))
-           (ext (file-name-extension filename))
-           (base (file-name-sans-extension filename))
-           (new-filename (format "%s%s.%s" base timestamp ext))
-           (is-image (member (downcase ext) '("png" "jpg" "jpeg" "gif" "webp" "bmp"))))
-      ;; Use org-attach to copy file (will create heading ID and :ATTACH: tag if needed)
-      (org-attach-attach filepath nil 'cp)
-      ;; Get the attachment directory and rename file to include timestamp
-      (let* ((attach-dir (org-attach-dir))
-             (old-path (expand-file-name filename attach-dir))
-             (new-path (expand-file-name new-filename attach-dir)))
-        (when (file-exists-p old-path)
-          (rename-file old-path new-path t)))
-      ;; Move to end of heading content to insert link
-      (org-end-of-subtree t t)
-      (unless (bolp) (insert "\n"))
-      (insert (format "[[attachment:%s]]\n" new-filename))
-      ;; Force refresh images if this was an image file
-      (when is-image
-        (org-remove-inline-images)
-        (org-display-inline-images t t (point-min) (point-max)))
-      (message "Attached from Yazi: %s (to heading: %s)" 
-               new-filename 
-               (org-get-heading t t t t)))))
-(defun my/paste-screenshot-naturally ()
-  "Paste screenshot at current heading by downloading from clipboard.
-Creates heading ID and :ATTACH: tag if needed. Each heading gets its own directory.
-Works similarly to Yazi paste but gets image data from clipboard."
-  ;; Save current position FIRST before any movement
-  (let ((original-point (point))
-        heading-title
-        attach-dir
-        timestamp
-        filename
-        filepath)
-    (message "DEBUG: Starting at point %d" original-point)
-    ;; Do all the heading work in save-excursion so cursor doesn't move
-    (save-excursion
-      (org-back-to-heading t)
-      (setq heading-title (org-get-heading t t t t))
-      (message "DEBUG: Found heading '%s' at point %d" heading-title (point))
-      ;; Ensure current heading has an ID
-      (unless (org-id-get)
-        (org-id-get-create))
-      ;; Get attachment directory
-      (setq attach-dir (org-attach-dir-get-create))
-      (setq timestamp (format-time-string "%Y%m%d_%H%M%S"))
-      (setq filename (format "_%sscreenshot.png" timestamp))
-      (setq filepath (expand-file-name filename attach-dir))
-      ;; Download clipboard image to file using xclip
-      (with-timeout (5 (user-error "Clipboard access timed out. Try clearing your clipboard or taking a new screenshot."))
-        (unless (= 0 (call-process "xclip" nil nil nil
-                                  "-selection" "clipboard"
-                                  "-t" "image/png"
-                                  "-o"))
-          (user-error "No image in clipboard or xclip failed")))
-      ;; Save clipboard image to attachment directory
-      (with-temp-buffer
-        (set-buffer-multibyte nil)
-        (call-process "xclip" nil t nil
-                     "-selection" "clipboard"
-                     "-t" "image/png"
-                     "-o")
-        (write-region (point-min) (point-max) filepath))
-      (message "DEBUG: Saved screenshot to %s" filepath))
-    ;; After save-excursion, we're back at original-point
-    (message "DEBUG: Inserting link at point %d" (point))
+      ;; Yazi file:// URI workflow
+      (is-valid-file
+       (my/org-copy-file-into-file-attach-dir filepath))
+      ;; Remote URL in clipboard (download explicitly to avoid package timing issues)
+      (is-web-url
+       (condition-case err
+           (my/org-download-url-into-file-attach-dir clipboard-text)
+         (error
+            (user-error "Clipboard URL is not a downloadable image/PDF (or fetch failed): %s"
+                        (error-message-string err)))))
+      ;; Screenshot workflow
+      (t
+        (condition-case err
+            (progn
+              (my/org-paste-clipboard-image-to-file-attach-dir))
+          (error
+            (user-error "No image found in clipboard. Please copy an image (screenshot) or file from Yazi first. Error: %s" 
+                       (error-message-string err))))))))
+
+(defun my/org--unique-destination-file (dir filename)
+  "Return a non-existing path in DIR for FILENAME."
+  (let* ((ext (or (file-name-extension filename t) ""))
+         (base (file-name-sans-extension filename))
+         (candidate (expand-file-name filename dir))
+         (n 1))
+    (while (file-exists-p candidate)
+      (setq candidate (expand-file-name (format "%s_%d%s" base n ext) dir)
+            n (1+ n)))
+    candidate))
+
+(defun my/org-copy-file-into-file-attach-dir (filepath)
+  "Copy FILEPATH into this note's file-based attach dir and insert a file link."
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
+         (src-name (file-name-nondirectory filepath))
+         (dest-path (progn
+                      (make-directory dest-dir t)
+                      (my/org--unique-destination-file dest-dir src-name)))
+         (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
+    (copy-file filepath dest-path nil)
     (unless (bolp) (insert "\n"))
-    (insert (format "[[attachment:%s]]\n" filename))
-    ;; Force refresh images
-    (org-remove-inline-images)
-    (org-display-inline-images t t (point-min) (point-max))
-    (message "Screenshot pasted at point %d" (point))))
+    (insert (org-link-make-string (concat "file:" (org-link-escape rel-path))) "\n")
+    (my/org-refresh-inline-previews (point-min) (point-max))
+    (message "Copied to %s" rel-path)))
+
+(defun my/org--buffer-prefix-p (s)
+  "Return non-nil if current buffer starts with byte string S."
+  (and (>= (- (point-max) (point-min)) (length s))
+       (string= s (buffer-substring-no-properties (point-min)
+                                                  (+ (point-min) (length s))))))
+
+(defun my/org--detect-image-mime-from-buffer ()
+  "Best-effort MIME detection for image bytes in current (unibyte) buffer."
+  (cond
+   ;; PNG
+   ((my/org--buffer-prefix-p "\x89PNG\r\n\x1a\n") "image/png")
+   ;; JPEG
+   ((my/org--buffer-prefix-p "\xff\xd8") "image/jpeg")
+   ;; GIF
+   ((or (my/org--buffer-prefix-p "GIF87a")
+        (my/org--buffer-prefix-p "GIF89a"))
+    "image/gif")
+   ;; BMP
+   ((my/org--buffer-prefix-p "BM") "image/bmp")
+   ;; WEBP: RIFF....WEBP
+   ((and (my/org--buffer-prefix-p "RIFF")
+         (>= (- (point-max) (point-min)) 12)
+         (string= "WEBP"
+                  (buffer-substring-no-properties (+ (point-min) 8)
+                                                  (+ (point-min) 12))))
+    "image/webp")
+   ;; SVG (text XML)
+   ((save-excursion
+      (goto-char (point-min))
+      (re-search-forward "<svg\\b" (min (point-max) (+ (point-min) 4096)) t))
+    "image/svg+xml")
+   (t nil)))
+
+(defun my/org-paste-clipboard-image-to-file-attach-dir ()
+  "Paste clipboard image into this note's file attach dir and insert a file link.
+This avoids creating heading-level ID drawers."
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
+         (tsfmt (if (boundp 'org-download-timestamp)
+                    org-download-timestamp
+                  "_%Y%m%d_%H%M%S"))
+         (targets (or (and (executable-find "xclip")
+                           (split-string
+                            (shell-command-to-string "xclip -selection clipboard -o -t TARGETS 2>/dev/null")
+                            "\n" t))
+                      (and (executable-find "wl-paste")
+                           (split-string
+                            (shell-command-to-string "wl-paste --list-types 2>/dev/null")
+                            "\n" t))
+                      '()))
+         (target-mime (seq-find (lambda (mime) (string-prefix-p "image/" mime)) targets))
+         (preferred-cmd (cond
+                         ((and target-mime (executable-find "xclip"))
+                          (list "xclip" "-selection" "clipboard" "-o" "-t" target-mime))
+                         ((and target-mime (executable-find "wl-paste"))
+                          (list "wl-paste" "-t" target-mime))
+                         (t nil)))
+         (fallback-cmd (cond
+                        ((executable-find "xclip")
+                         '("xclip" "-selection" "clipboard" "-o"))
+                        ((executable-find "wl-paste")
+                         '("wl-paste"))
+                        (t nil)))
+         (image-bytes nil)
+         (mime nil))
+    (unless (or (executable-find "xclip") (executable-find "wl-paste"))
+      (user-error "No clipboard image tool found (need wl-paste or xclip)"))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (let ((got-bytes nil))
+        (when preferred-cmd
+          (setq got-bytes
+                (= 0 (apply #'call-process (car preferred-cmd) nil t nil (cdr preferred-cmd))))
+          (unless got-bytes
+            (erase-buffer)))
+        (unless got-bytes
+          (erase-buffer)
+          (unless (and fallback-cmd
+                       (= 0 (apply #'call-process (car fallback-cmd) nil t nil (cdr fallback-cmd))))
+            (user-error "No image in clipboard or clipboard command failed"))))
+      (when (= (buffer-size) 0)
+        (user-error "Clipboard is empty"))
+      (setq mime (or target-mime (my/org--detect-image-mime-from-buffer)))
+      (setq image-bytes
+            (string-as-unibyte
+             (buffer-substring-no-properties (point-min) (point-max)))))
+
+    (let* ((ext (pcase mime
+                  ((or "image/jpeg" "image/jpg") "jpg")
+                  ("image/webp" "webp")
+                  ("image/gif" "gif")
+                  ("image/bmp" "bmp")
+                  ("image/svg+xml" "svg")
+                  ("image/png" "png")
+                  (_ nil))))
+      (unless ext
+        (user-error "No image detected in clipboard"))
+      (let* ((filename (format "%sscreenshot.%s" (format-time-string tsfmt) ext))
+             (dest-path (progn
+                          (make-directory dest-dir t)
+                          (my/org--unique-destination-file dest-dir filename)))
+             (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
+        (with-temp-file dest-path
+          (set-buffer-multibyte nil)
+          (insert image-bytes))
+        (ignore-errors (image-flush dest-path))
+        (unless (bolp) (insert "\n"))
+        (insert (org-link-make-string (concat "file:" (org-link-escape rel-path))) "\n")
+        (my/org-refresh-inline-previews (point-min) (point-max))
+        (message "Pasted clipboard image to %s" rel-path)))))
+
+(defun my/org-download-url-into-file-attach-dir (url)
+  "Download URL into this note's attach dir and insert a file link."
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
+         (tsfmt (if (boundp 'org-download-timestamp)
+                    org-download-timestamp
+                  "_%Y%m%d_%H%M%S"))
+         (raw-name (or (file-name-nondirectory
+                        (car (url-path-and-query (url-generic-parse-url url))))
+                       "downloaded"))
+         (safe-name (if (string-empty-p raw-name) "downloaded" raw-name))
+         (filename (format "%s%s" (format-time-string tsfmt) safe-name))
+         (dest-path (progn
+                      (make-directory dest-dir t)
+                      (my/org--unique-destination-file dest-dir filename)))
+         (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
+    (url-copy-file url dest-path t)
+    (unless (bolp) (insert "\n"))
+    (insert (org-link-make-string (concat "file:" (org-link-escape rel-path))) "\n")
+    (my/org-refresh-inline-previews (point-min) (point-max))
+    (message "Downloaded URL to %s" rel-path)))
+
+(defun my/org-remove-empty-id-drawers-in-current-buffer ()
+  "Remove empty property drawers under headings in current Org buffer.
+Keeps top-level node metadata drawer intact for org-roam."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in org-mode"))
+  (let ((removed 0))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "^\\*+ " nil t)
+        (save-excursion
+          (forward-line 1)
+          (when (looking-at-p "^[ \t]*:PROPERTIES:")
+            (let ((drawer-beg (point))
+                  (drawer-end (save-excursion
+                                (when (re-search-forward "^[ \t]*:END:[ \t]*$" nil t)
+                                  (line-end-position)))))
+              (when drawer-end
+                (let ((content (buffer-substring-no-properties drawer-beg drawer-end)))
+                  (when (not (string-match-p "^[ \t]*:PROPERTIES:[ \t\n]*:END:[ \t]*$" content))
+                    (setq drawer-beg nil)))
+                (when drawer-beg
+                  (delete-region drawer-beg drawer-end)
+                  (delete-blank-lines)
+                  (setq removed (1+ removed)))))))))
+    (message "Removed %d empty heading property drawers" removed)
+    removed))
+
+(defun my/org-migrate-attachment-links-in-current-buffer (&optional dry-run)
+  "Migrate [[attachment:...]] links in current buffer to [[file:...]] links.
+Copies files from heading-based org-attach dirs into this file's attach dir.
+With DRY-RUN non-nil, only report what would change."
+  (interactive "P")
+  (unless (and (derived-mode-p 'org-mode) buffer-file-name)
+    (user-error "Must be in a file-backed org-mode buffer"))
+  (require 'org-attach)
+  (let ((changes '())
+        (converted 0)
+        (copied 0)
+        (skipped 0))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward org-link-bracket-re nil t)
+        (let ((ctx (save-match-data (org-element-context))))
+          (when (and (eq (org-element-type ctx) 'link)
+                     (string= (org-element-property :type ctx) "attachment"))
+            (let* ((beg (org-element-property :begin ctx))
+                   (end (org-element-property :end ctx))
+                   (path (org-element-property :path ctx))
+                   (desc (when-let ((cb (org-element-property :contents-begin ctx))
+                                    (ce (org-element-property :contents-end ctx)))
+                           (buffer-substring-no-properties cb ce)))
+                   (src (save-excursion
+                          (goto-char beg)
+                          (condition-case nil
+                              (org-attach-expand path)
+                            (error nil)))))
+              (if (and src (file-exists-p src))
+                  (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
+                         (dest-path (progn
+                                      (make-directory dest-dir t)
+                                      (my/org--unique-destination-file
+                                       dest-dir (file-name-nondirectory src))))
+                         (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name)))
+                         (new-link (org-link-make-string
+                                    (concat "file:" (org-link-escape rel-path))
+                                    desc)))
+                    (push (list beg end src dest-path new-link) changes))
+                (setq skipped (1+ skipped))))))))
+    (dolist (change (sort changes (lambda (a b) (> (car a) (car b)))))
+      (pcase-let ((`(,beg ,end ,src ,dest ,new-link) change))
+        (setq converted (1+ converted))
+        (unless dry-run
+          (copy-file src dest nil)
+          (setq copied (1+ copied))
+          (goto-char beg)
+          (delete-region beg end)
+          (insert new-link))))
+    (unless (or dry-run (= converted 0))
+      (save-buffer))
+    (message "%s: converted=%d copied=%d skipped=%d"
+             (if dry-run "DRY-RUN" "Migrated") converted copied skipped)
+    (list :converted converted :copied copied :skipped skipped :dry-run dry-run)))
+
+(defun my/org-migrate-attachment-links-in-brain2 (&optional dry-run)
+  "Migrate attachment links across `org-directory` recursively.
+With DRY-RUN non-nil, only report totals."
+  (interactive "P")
+  (let* ((root (expand-file-name org-directory))
+         (files (directory-files-recursively root "\\.org\\'"))
+         (total-converted 0)
+         (total-copied 0)
+         (total-skipped 0)
+         (touched 0))
+    (dolist (file files)
+      (with-current-buffer (find-file-noselect file)
+        (let ((res (my/org-migrate-attachment-links-in-current-buffer dry-run)))
+          (cl-incf total-converted (or (plist-get res :converted) 0))
+          (cl-incf total-copied (or (plist-get res :copied) 0))
+          (cl-incf total-skipped (or (plist-get res :skipped) 0))
+          (when (> (or (plist-get res :converted) 0) 0)
+            (cl-incf touched)))))
+    (message "%s %d files (touched=%d): converted=%d copied=%d skipped=%d"
+             (if dry-run "DRY-RUN across" "Migrated across")
+             (length files) touched total-converted total-copied total-skipped)
+    (list :files (length files)
+          :touched touched
+          :converted total-converted
+          :copied total-copied
+          :skipped total-skipped
+          :dry-run dry-run)))
 #+end_src
 
 ** Keybindings
@@ -2224,12 +2552,7 @@ Simple, clean formatting for org files:
            ("w" "Weekly TODO" entry
             (file+olp "~/Documents/brain2/inbox.org" "This Week")
             "** TODO %?\n"
-            :empty-lines 1)
-            ("D" "Document (LaTeX export)" plain
-             (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
-                        "#+TITLE: %^{Title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %^{Date|%<%Y-%m-%d>}\n#+FILETAGS: :document:\n#+LATEX_CLASS: %^{LaTeX class|essay|article|report}\n#+OPTIONS: toc:%^{TOC|nil|t} num:%^{num|nil|t}\n")
-             "%?\n"
-              :unnarrowed t)))
+            :empty-lines 1)))
    
    ;; Define custom LaTeX export classes for essay, article, and report
    ;; These classes handle document formatting and margins site-wide
@@ -2279,91 +2602,81 @@ Simple, clean formatting for org files:
                         '("\\section{%s}" . "\\section*{%s}"))))
   
    (defun my/org-format-buffer ()
-    "Format org buffer with consistent, clean spacing matching example.org style."
+    "Format org buffer with stable, idempotent spacing rules."
     (interactive)
     (save-excursion
-      ;; First, collapse runs of 3+ blank lines into exactly two.
-      ;; Preserve single blank lines between paragraphs.
+      ;; Baseline spacing rules for paragraphs/results/src blocks.
+      (my/org-add-blank-lines-around-src-blocks)
+      (my/org-ensure-blank-lines-between-paragraphs)
+
+      ;; Ensure one blank line between heading metadata and heading body.
+      (goto-char (point-min))
+      (while (re-search-forward "^\\*+ " nil t)
+        (forward-line 1)
+        (when (looking-at-p "^[ \t]*:PROPERTIES:")
+          (re-search-forward "^[ \t]*:END:" nil t)
+          (forward-line 1))
+        (while (looking-at-p "^[ \t]*\\(SCHEDULED:\\|DEADLINE:\\|CLOSED:\\)")
+          (forward-line 1))
+        (when (looking-at-p "^[ \t]*:LOGBOOK:")
+          (re-search-forward "^[ \t]*:END:" nil t)
+          (forward-line 1))
+        (unless (or (eobp)
+                    (looking-at-p "^[ \t]*$")
+                    (looking-at-p "^\\*"))
+          (insert "\n")))
+
+      ;; Keep at most one blank line gap globally.
       (goto-char (point-min))
       (while (re-search-forward "\n\{3,\}" nil t)
         (replace-match "\n\n"))
-      
-      ;; Add blank line after title/filetags section
-      (goto-char (point-min))
-      (when (re-search-forward "^#\\+\\(TITLE\\|FILETAGS\\):" nil t)
-        (forward-line 1)
-        (while (looking-at "^#\\+")
-          (forward-line 1))
-        (when (looking-at "^:PROPERTIES:")
-          (re-search-forward "^:END:" nil t)
-          (forward-line 1))
-        (when (looking-at "^\\*")
-          (insert "\n")))
-      
-      ;; Process all headings
-      (goto-char (point-min))
-      (while (re-search-forward "^\\(\\*+\\) " nil t)
-        (forward-line 1)
-        (when (looking-at "^[ \t]*:PROPERTIES:")
-          (re-search-forward "^[ \t]*:END:" nil t)
-          (forward-line 1))
-        (while (looking-at "^[ \t]*\\(SCHEDULED:\\|DEADLINE:\\|CLOSED:\\)")
-          (forward-line 1))
-        (when (looking-at "^[ \t]*:LOGBOOK:")
-          (re-search-forward "^[ \t]*:END:" nil t)
-          (forward-line 1))
-        (let ((content-start (point)))
-          (cond
-           ((eobp)
-            (insert "\n"))
-           ((looking-at "^\\*")
-            (insert "\n"))
-           (t
-            (goto-char content-start)
-            (insert "\n")
-            (if (re-search-forward "^\\*" nil t)
-                (progn
-                  (beginning-of-line)
-                  (insert "\n")
-                  (beginning-of-line))
-              (goto-char (point-max))
-              (unless (bolp)
-                (insert "\n")))))))
-      
-      ;; Add blank lines before attachment links (but not after captions)
+
+      ;; Ensure one blank line before attachment links (unless already blank,
+      ;; or directly under an italic caption line).
       (goto-char (point-min))
       (while (re-search-forward "^\\[\\[attachment:" nil t)
         (beginning-of-line)
-        ;; Check if previous line is not blank and not an italic caption
         (unless (or (bobp)
                     (save-excursion
                       (forward-line -1)
-                      (or (looking-at "^[ \t]*$")
-                          (looking-at "^/"))))
+                      (or (looking-at-p "^[ \t]*$")
+                          (looking-at-p "^/.+/$"))))
           (insert "\n"))
         (forward-line 1))
-      
-      ;; Add blank lines after italic captions (when followed by attachment or body text)
+
+      ;; Ensure one blank line before headings, except when previous line is a
+      ;; #+SPECIAL keyword (keep keyword visually attached to heading).
+      (goto-char (point-min))
+      (while (re-search-forward "^\\*+ " nil t)
+        (beginning-of-line)
+        (unless (or (bobp)
+                    (save-excursion
+                      (forward-line -1)
+                      (or (looking-at-p "^[ \t]*$")
+                          (looking-at-p "^[ \t]*#\\+[A-Z0-9_@#%:.-]+:.*$"))))
+          (insert "\n"))
+        (forward-line 1))
+
+      ;; Ensure one blank line after italic caption lines when body/link/src follows.
       (goto-char (point-min))
       (while (re-search-forward "^/.+/$" nil t)
         (forward-line 1)
-        ;; Add blank line if next line exists and is not blank and not a heading
         (unless (or (eobp)
-                    (looking-at "^[ \t]*$")
-                    (looking-at "^\\*"))
+                    (looking-at-p "^[ \t]*$")
+                    (looking-at-p "^\\*"))
           (insert "\n")))
-      
-      ;; Clean up trailing blank lines
+
+      ;; Trim trailing blank lines at end of file.
       (goto-char (point-max))
-      (while (and (> (point) 1)
+      (while (and (> (point) (point-min))
                   (eq (char-before) ?\n)
-                  (eq (char-before (1- (point))) ?\n))
+                  (save-excursion
+                    (backward-char 1)
+                    (or (bobp) (eq (char-before) ?\n))))
         (delete-char -1))))
-   
-   ;; NOTE: automatic `my/org-format-buffer` on-save removed to avoid
-   ;; conflicting edits with paragraph/code-block spacing helpers.
-   ;; If you prefer to run it manually, call M-x my/org-format-buffer.
-   )
+
+   ;; Run the formatter automatically on save.
+    )
 #+end_src
 
 * Org Inline Images
@@ -2378,8 +2691,120 @@ To view the full resolution, open the image externally with =RET= on the link.
   ;; Display images at max 800px width instead of full resolution
   ;; This reduces rendering overhead for large screenshots
   (setq org-image-actual-width 600)
+  ;; Keep property drawers folded by default in Org buffers.
+  (setq org-cycle-hide-drawer-startup t)
   ;; Left-align by default (centered in writeroom mode via hook below)
-  (setq org-image-align 'left))
+  (setq org-image-align 'left)
+
+  (add-hook 'org-mode-hook
+            (lambda ()
+              (when (derived-mode-p 'org-mode)
+                (org-cycle-hide-drawers 'all))))
+
+  ;; Org 9.8+ preview compatibility: Doom may still reference the old symbol.
+  (when (and (fboundp '+org-link-preview-attachment-fn)
+             (not (fboundp '+org-preview-image-file-fn)))
+    (defalias '+org-preview-image-file-fn #'+org-link-preview-attachment-fn))
+  (when (fboundp '+org-link-preview-attachment-fn)
+    (org-link-set-parameters "attachment" :preview #'+org-link-preview-attachment-fn))
+
+  (defun my/org-refresh-inline-previews (&optional beg end)
+    "Refresh link/image previews in BEG..END (or the whole buffer)."
+    (let ((beg (or beg (point-min)))
+          (end (or end (point-max))))
+      (condition-case err
+          (if (fboundp 'org-link-preview-region)
+              ;; INCLUDE-LINKED=t previews links with descriptions too.
+              (org-link-preview-region t t beg end)
+            (org-display-inline-images t t beg end))
+        (error (message "Inline preview refresh failed: %s" (error-message-string err))))))
+
+  (defun my/org-toggle-inline-previews (&optional arg)
+    "Toggle inline link/image previews with compatibility across Org versions.
+Without ARG, this toggles previews across the whole accessible buffer."
+    (interactive "P")
+    (cond
+     ;; Preserve old `org-toggle-inline-images` behavior: global buffer toggle.
+     ((and (null arg) (fboundp 'org-link-preview-region) (fboundp 'org-link-preview-clear))
+      (let ((has-previews (or (and (boundp 'org-link-preview-overlays)
+                                   org-link-preview-overlays)
+                              (and (boundp 'org-inline-image-overlays)
+                                   org-inline-image-overlays))))
+        (if has-previews
+            (org-link-preview-clear (point-min) (point-max))
+          (org-link-preview-region t t (point-min) (point-max)))))
+     ((fboundp 'org-link-preview)
+      (cond
+       ;; Keep compatibility with old `org-toggle-inline-images`: no prefix
+       ;; means full-buffer toggle, including described links.
+       ((null arg)
+        (let ((has-previews (or (and (boundp 'org-link-preview-overlays)
+                                     org-link-preview-overlays)
+                                (and (boundp 'org-inline-image-overlays)
+                                     org-inline-image-overlays))))
+          (if has-previews
+              (org-link-preview-clear (point-min) (point-max))
+            (org-link-preview-region t t (point-min) (point-max)))))
+       (t
+        (org-link-preview arg))))
+     (t
+      (org-toggle-inline-images arg))))
+
+  ;; Keep `z i` stable after Org 9.8's preview API changes.
+  (map! :map org-mode-map
+        :n "zi" #'my/org-toggle-inline-previews
+        :n "z i" #'my/org-toggle-inline-previews)
+
+  ;; Make the stock Org key use the same full-buffer toggle behavior.
+  (define-key org-mode-map (kbd "C-c C-x C-v") #'my/org-toggle-inline-previews))
+
+;; Doom binds `zi` in `evil-org-mode-map`; override that too.
+
+
+;; Keep RET ergonomic for image links with descriptions:
+;; if point is on file:/attachment: image link, toggle that one preview;
+;; otherwise preserve Doom's regular org DWIM behavior.
+  (defun my/org-dwim-at-point-or-toggle-link-preview (&optional arg)
+  "Toggle preview for image links at point, else fallback to `+org/dwim-at-point`."
+  (interactive "P")
+  (let* ((ctx (org-element-context))
+         (link (org-element-lineage ctx '(link) t))
+         (type (and link (org-element-property :type link)))
+         (path (and link (org-element-property :path link))))
+    (if (and link
+             (member type '("file" "attachment" "http" "https" "download"))
+             (let* ((clean (car (split-string (or path "") "[#?]")))
+                    (resolved
+                     (pcase type
+                       ((or "http" "https") nil)
+                       ("download"
+                        (expand-file-name clean (or org-download-image-dir default-directory)))
+                       (_ (expand-file-name clean (file-name-directory (or buffer-file-name default-directory)))))))
+               (or (and resolved (image-type-from-file-name resolved))
+                   (and (member type '("http" "https"))
+                        (image-type-from-file-name clean)))))
+        (let ((beg (org-element-property :begin link))
+              (end (org-element-property :end link)))
+          (if (fboundp 'org-link-preview-region)
+              (let ((has-previews (cl-remove-if-not
+                                   (lambda (ov) (overlay-get ov 'org-image-overlay))
+                                   (ignore-errors (overlays-in beg end)))))
+                (if has-previews
+                    (org-link-preview-clear beg end)
+                  (org-link-preview-region t t beg end)))
+            (+org--toggle-inline-images-in-subtree beg end)))
+      (+org/dwim-at-point arg))))
+
+(after! org
+  (defun my/org-keys-override-h ()
+    "Override org/evil-org local keys with preview-friendly variants."
+    (local-set-key (kbd "RET") #'my/org-dwim-at-point-or-toggle-link-preview)
+    (local-set-key (kbd "zi") #'my/org-toggle-inline-previews)
+    (when (bound-and-true-p evil-local-mode)
+      (evil-local-set-key 'normal (kbd "zi") #'my/org-toggle-inline-previews)
+      (evil-local-set-key 'normal (kbd "z i") #'my/org-toggle-inline-previews)
+      (evil-local-set-key 'motion (kbd "RET") #'my/org-dwim-at-point-or-toggle-link-preview)))
+  (add-hook 'org-mode-hook #'my/org-keys-override-h))
 #+end_src
 
 ** Unified Image Display for Org-Download
@@ -2395,10 +2820,15 @@ which breaks toggle functionality for manual attachments in other headings.
 (after! org-download
   (defun org-download--display-inline-images ()
     "Display all inline images in buffer after pasting.
-This ensures org-inline-image-overlays includes all images,
-making z i toggle work consistently for manual and pasted attachments."
+This keeps preview overlays in sync for manual and pasted attachments."
     (when (eq org-download-display-inline-images t)
-      (org-display-inline-images t nil (point-min) (point-max)))))
+      (my/org-refresh-inline-previews (point-min) (point-max)))))
+
+;; Doom's org/+dragndrop config may reset this to [[download:...]].
+;; Re-assert file links after everything has loaded.
+(after! org-download
+  (setq org-download-link-format "[[file:%s]]\n"
+        org-download-abbreviate-filename-function #'file-relative-name))
 #+end_src
 
 * Zen Mode Customization
@@ -2423,9 +2853,15 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
           (when (derived-mode-p 'org-mode)
             (setq-local org-modern-hide-stars t)
             (variable-pitch-mode 1)  ; Use proportional font for prose
-            (setq-local org-image-align 'center)  ; Center images in zen mode
-            (when org-inline-image-overlays  ; Refresh if images are displayed
-              (org-redisplay-inline-images)))
+            (setq-local org-image-align 'center)  ; Center image previews in zen mode
+            (setq-local org-image-actual-width '(0.8)) ; Scale images to ~80% window width
+            ;; Hide property drawers on zen entry for cleaner writing view.
+            (if (fboundp 'org-fold-hide-drawer-all)
+                (org-fold-hide-drawer-all (point-min) (point-max))
+              (org-cycle-hide-drawers 'all))
+            (when (or (bound-and-true-p org-link-preview-overlays)
+                      (bound-and-true-p org-inline-image-overlays))
+              (my/org-refresh-inline-previews (point-min) (point-max))))
           (text-scale-set 2))  ; Larger font for comfortable reading
       (progn
         ;; Restore when exiting zen mode
@@ -2434,8 +2870,9 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
           (setq-local org-modern-hide-stars 'leading)
           (variable-pitch-mode -1)
           (setq-local org-image-align 'left)  ; Restore left alignment
-          (when org-inline-image-overlays  ; Refresh if images are displayed
-            (org-redisplay-inline-images)))))))
+          (when (or (bound-and-true-p org-link-preview-overlays)
+                    (bound-and-true-p org-inline-image-overlays))
+            (my/org-refresh-inline-previews (point-min) (point-max))))))))
 #+end_src
 
 * Dashboard Customization
@@ -2798,8 +3235,8 @@ Evaluate the block (place point inside it and press C-c C-c) to apply immediatel
 You can evaluate the block (place point inside it and press C-c C-c) to apply immediately, or reload Doom with M-x doom/reload to apply on startup.
 
 #+begin_src emacs-lisp
-(map! :map org-mode-map
-      "C-c a" #'aya-create)  ;; or any key you prefer
+;; (map! :map org-mode-map
+;;       "C-c a" #'aya-create)  ;; or any key you prefer
 #+end_src
 
 #+PROPERTY: header-args :tangle yes :cache yes :results silent :padline no
