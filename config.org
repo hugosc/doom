@@ -842,7 +842,7 @@ My capture templates support different types of content in my knowledge system:
            ("db" "Book/chapter document" plain
             "* Introduction\n\n%?"
             :if-new (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
-                               "#+TITLE: ${title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %<%Y-%m-%d>\n#+FILETAGS: :document:book:\n#+LATEX_CLASS: report\n#+OPTIONS: toc:t num:t\n")
+                               "#+TITLE: ${title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %<%Y-%m-%d>\n#+FILETAGS: :document:book:\n#+LATEX_CLASS: book\n#+OPTIONS: toc:t num:t\n")
             :unnarrowed t)
           ("a" "Assignment plan" plain
            "* Brief\n%?\n* Requirements\n* Sources\n* Outline\n* Timeline\n* Status"
@@ -860,6 +860,26 @@ My capture templates support different types of content in my knowledge system:
            "* <%<%Y-%m-%d %a %H:%M>>\n%?"
            :target (file+head "%<%Y-%m-%d>.org"
                               "#+TITLE: %<%B %d, %Y>\n#+FILETAGS: :daily:\n")))))
+
+  ;; Force-restore the dailies prefix map at SPC n r d ...
+  ;; so keys like n r d d / n r d t / n r d T always work.
+  (defvar my/org-roam-dailies-prefix-map (make-sparse-keymap))
+  (setq my/org-roam-dailies-prefix-map (make-sparse-keymap))
+  (define-key my/org-roam-dailies-prefix-map (kbd "b") #'org-roam-dailies-goto-previous-note)
+  (define-key my/org-roam-dailies-prefix-map (kbd "d") #'org-roam-dailies-goto-date)
+  (define-key my/org-roam-dailies-prefix-map (kbd "D") #'org-roam-dailies-capture-date)
+  (define-key my/org-roam-dailies-prefix-map (kbd "f") #'org-roam-dailies-goto-next-note)
+  (define-key my/org-roam-dailies-prefix-map (kbd "m") #'org-roam-dailies-goto-tomorrow)
+  (define-key my/org-roam-dailies-prefix-map (kbd "M") #'org-roam-dailies-capture-tomorrow)
+  (define-key my/org-roam-dailies-prefix-map (kbd "n") #'org-roam-dailies-capture-today)
+  (define-key my/org-roam-dailies-prefix-map (kbd "t") #'org-roam-dailies-goto-today)
+  (define-key my/org-roam-dailies-prefix-map (kbd "T") #'org-roam-dailies-capture-today)
+  (define-key my/org-roam-dailies-prefix-map (kbd "y") #'org-roam-dailies-goto-yesterday)
+  (define-key my/org-roam-dailies-prefix-map (kbd "Y") #'org-roam-dailies-capture-yesterday)
+  (define-key my/org-roam-dailies-prefix-map (kbd "-") #'org-roam-dailies-find-directory)
+  (let ((nr-map (lookup-key doom-leader-map (kbd "n r"))))
+    (when (keymapp nr-map)
+      (define-key nr-map (kbd "d") my/org-roam-dailies-prefix-map)))
 #+end_src
 
 ** Org-Roam Dailies
@@ -2556,52 +2576,170 @@ Simple, clean formatting for org files:
             "** TODO %?\n"
             :empty-lines 1)))
    
-   ;; Define custom LaTeX export classes for essay, article, and report
-   ;; These classes handle document formatting and margins site-wide
+   ;; Register LaTeX classes eagerly so `org-latex-classes` is populated.
+   ;; Use class-name replacement (alist setf) to avoid duplicate entries.
+   (require 'ox-latex)
+   (defun my/org--set-latex-class (name header &rest sections)
+     "Create or replace NAME in `org-latex-classes`."
+     (setf (alist-get name org-latex-classes nil nil #'equal)
+           (cons header sections)))
+
+   ;; essay: centered title block, compact margins for prose assignments
+   (my/org--set-latex-class
+    "essay"
+    (concat "\\documentclass[11pt]{article}\n"
+            "\\usepackage[a4paper,top=2.5cm,bottom=2.0cm,left=2.5cm,right=2.5cm]{geometry}\n"
+            "\\usepackage{microtype}\n"
+            "\\usepackage{titling}\n"
+            "\\pretitle{\\begin{center}\\LARGE}\\posttitle{\\par\\end{center}}\n"
+            "\\preauthor{\\begin{center}\\large}\\postauthor{\\par\\end{center}}\n"
+            "\\predate{\\begin{center}\\small}\\postdate{\\par\\end{center}}\n")
+    '("\\section{%s}" . "\\section*{%s}")
+    '("\\subsection{%s}" . "\\subsection*{%s}")
+    '("\\subsubsection{%s}" . "\\subsubsection*{%s}")
+    '("\\paragraph{%s}" . "\\paragraph*{%s}")
+    '("\\subparagraph{%s}" . "\\subparagraph*{%s}"))
+
+   ;; article: running headers for longer non-chapter docs
+   (my/org--set-latex-class
+    "article"
+    (concat "\\documentclass[11pt]{article}\n"
+            "\\usepackage[a4paper,margin=2.5cm]{geometry}\n"
+            "\\usepackage{microtype}\n"
+            "\\usepackage{fancyhdr}\n"
+            "\\pagestyle{fancy}\n"
+            "\\fancyhf{}\n"
+            "\\fancyhead[LE,RO]{\\thepage}\n"
+            "\\fancyhead[RE,LO]{\\nouppercase{\\leftmark}}\n")
+    '("\\section{%s}" . "\\section*{%s}")
+    '("\\subsection{%s}" . "\\subsection*{%s}")
+    '("\\subsubsection{%s}" . "\\subsubsection*{%s}"))
+
+   ;; report: chapter-first structure for formal reports
+   (my/org--set-latex-class
+    "report"
+    (concat "\\documentclass[12pt]{report}\n"
+            "\\usepackage[a4paper,margin=3cm]{geometry}\n"
+            "\\usepackage{microtype}\n"
+            "\\usepackage{fancyhdr}\n"
+            "\\pagestyle{plain}\n")
+    '("\\chapter{%s}" . "\\chapter*{%s}")
+    '("\\section{%s}" . "\\section*{%s}")
+    '("\\subsection{%s}" . "\\subsection*{%s}"))
+
+   ;; book: chapter-based layout with roomier margins
+   (my/org--set-latex-class
+    "book"
+    (concat "\\documentclass[11pt,oneside]{book}\n"
+            "\\usepackage[a4paper,margin=3cm]{geometry}\n"
+            "\\usepackage{microtype}\n")
+    '("\\chapter{%s}" . "\\chapter*{%s}")
+    '("\\section{%s}" . "\\section*{%s}")
+    '("\\subsection{%s}" . "\\subsection*{%s}"))
+
+   ;; Bibliography defaults (Doom :tools biblio via org-cite + citar).
+   ;; Keep everything under brain2/biblio so LaTeX exports are predictable.
+   (defvar my/biblio-root (expand-file-name "biblio/" org-directory))
+   (setq citar-bibliography
+         (list (expand-file-name "references.bib" my/biblio-root))
+         citar-library-paths
+         (list (expand-file-name "library/" my/biblio-root))
+         citar-notes-paths
+         (list org-directory)
+         org-cite-csl-styles-dir
+         (expand-file-name "csl/" my/biblio-root))
+
+   ;; Keep org-cite and citar bibliography paths in sync.
+   (with-eval-after-load 'oc
+     (setq org-cite-global-bibliography citar-bibliography
+           ;; APA defaults:
+           ;; - Prefer biblatex+biber for LaTeX when biber is available.
+           ;; - Fallback to CSL for LaTeX when biber isn't installed.
+           org-cite-export-processors
+           (if (executable-find "biber")
+               '((latex biblatex "style=apa,backend=biber")
+                 (t csl "apa.csl"))
+             '((latex csl "apa.csl")
+               (t csl "apa.csl")))))
+
+   ;; Use latexmk so biblatex/biber flows are handled during PDF export.
    (with-eval-after-load 'ox-latex
-     (unless (boundp 'org-latex-classes)
-       (setq org-latex-classes nil))
-     
-     ;; essay: centered title/author/date, compact margins
-     (add-to-list 'org-latex-classes
-                  (list "essay"
-                        (concat "\\documentclass[11pt]{article}\n"
-                                "\\usepackage[a4paper,top=2.5cm,bottom=2.0cm,left=2.5cm,right=2.5cm]{geometry}\n"
-                                "\\usepackage{microtype}\n"
-                                "\\usepackage{titling}\n"
-                                "\\pretitle{\\begin{center}\\LARGE}\\posttitle{\\par\\end{center}}\n"
-                                "\\preauthor{\\begin{center}\\large}\\postauthor{\\par\\end{center}}\n"
-                                "\\predate{\\begin{center}\\small}\\postdate{\\par\\end{center}}\n")
-                        '("\\section{%s}" . "\\section*{%s}")
-                        '("\\subsection{%s}" . "\\subsection*{%s}")
-                        '("\\subsubsection{%s}" . "\\subsubsection*{%s}")
-                        '("\\paragraph{%s}" . "\\paragraph*{%s}")
-                        '("\\subparagraph{%s}" . "\\subparagraph*{%s}")))
-     
-     ;; article: uses fancyhdr to show page numbers in header
-     (add-to-list 'org-latex-classes
-                  (list "article"
-                        (concat "\\documentclass[11pt]{article}\n"
-                                "\\usepackage[a4paper,margin=2.5cm]{geometry}\n"
-                                "\\usepackage{microtype}\n"
-                                "\\usepackage{fancyhdr}\n"
-                                "\\pagestyle{fancy}\n"
-                                "\\fancyhf{}\n"
-                                "\\fancyhead[LE,RO]{\\thepage}\n"
-                                "\\fancyhead[RE,LO]{\\nouppercase{\\leftmark}}\n")
-                        '("\\section{%s}" . "\\section*{%s}")
-                        '("\\subsection{%s}" . "\\subsection*{%s}")))
-     
-     ;; report: chapter support and larger default font
-     (add-to-list 'org-latex-classes
-                  (list "report"
-                        (concat "\\documentclass[12pt]{report}\n"
-                                "\\usepackage[a4paper,margin=3cm]{geometry}\n"
-                                "\\usepackage{microtype}\n"
-                                "\\usepackage{fancyhdr}\n"
-                                "\\pagestyle{plain}\n")
-                        '("\\chapter{%s}" . "\\chapter*{%s}")
-                        '("\\section{%s}" . "\\section*{%s}"))))
+      (setq org-latex-pdf-process
+            '("latexmk -pdf -interaction=nonstopmode -output-directory=%o %f")))
+
+   ;; DOI importer: fetch BibTeX from doi.org and append to references.bib.
+   (defun my/citar-import-doi (doi)
+     "Import DOI into `citar-bibliography' as a BibTeX entry."
+     (interactive "sDOI: ")
+     (let* ((doi (thread-last doi
+                              string-trim
+                              (replace-regexp-in-string "\\`doi:[[:space:]]*" "")
+                              (replace-regexp-in-string "\\`https?://\\(?:dx\\.\\)?doi\\.org/" "")
+                              (replace-regexp-in-string "[[:space:]]+" "")))
+            (bib-file (car citar-bibliography))
+            (url (concat "https://doi.org/" doi)))
+       (unless (and bib-file (not (string-empty-p bib-file)))
+         (user-error "No bibliography file configured"))
+       (unless (or (file-writable-p bib-file)
+                   (file-writable-p (file-name-directory bib-file)))
+         (user-error "Bibliography path is not writable: %s" bib-file))
+      (let ((url-request-method "GET")
+            (url-request-extra-headers '(("Accept" . "application/x-bibtex")))
+            (entry nil)
+            (last-error nil)
+            (candidates (list url
+                              (format "https://api.crossref.org/v1/works/%s/transform"
+                                      (url-hexify-string doi)))))
+        (dolist (candidate candidates)
+          (unless entry
+            (condition-case err
+                (with-current-buffer (or (url-retrieve-synchronously candidate t t 20)
+                                         (user-error "DOI lookup request failed: %s" candidate))
+                  (unwind-protect
+                      (progn
+                        (goto-char (point-min))
+                        (let ((status (when (re-search-forward "^HTTP/[0-9.]+ \\([0-9]+\\)" nil t)
+                                        (string-to-number (match-string 1)))))
+                          (when (and status (>= status 300))
+                            (user-error "DOI lookup HTTP %s for %s" status candidate)))
+                        (goto-char (point-min))
+                        (unless (re-search-forward "\r?\n\r?\n" nil t)
+                          (user-error "DOI lookup response missing HTTP body: %s" candidate))
+                        (let ((body (string-trim (buffer-substring-no-properties (point) (point-max)))))
+                          ;; Some providers prepend text; keep BibTeX payload onward.
+                          (when (string-match "@" body)
+                            (setq body (substring body (match-beginning 0))))
+                          (when (string-match-p "\\`@[[:alpha:]]+[{(]" body)
+                            (setq entry body))))
+                    (kill-buffer (current-buffer))))
+              (error (setq last-error (error-message-string err))))))
+        (unless entry
+          (user-error "DOI lookup did not return BibTeX: %s%s"
+                      doi
+                      (if last-error (concat " (" last-error ")") "")))
+        (let ((key nil))
+          (when (string-match "\\`@.+[{(]\\([^,[:space:]]+\\)," entry)
+            (setq key (match-string 1 entry)))
+          (with-temp-buffer
+            (when (file-exists-p bib-file)
+              (insert-file-contents bib-file))
+            (when (and key
+                       (save-excursion
+                         (goto-char (point-min))
+                         (re-search-forward (concat "@.+[{(]" (regexp-quote key) ",") nil t)))
+              (user-error "Bib key already exists: %s" key))
+            (goto-char (point-max))
+            (unless (or (bobp) (bolp))
+              (insert "\n"))
+            (insert entry "\n\n")
+            (write-region (point-min) (point-max) bib-file nil 'silent))
+          (message "Imported DOI into %s" bib-file))))))
+
+   ;; Quality-of-life shortcut in org/latex/bibtex buffers.
+   ;; Keep Doom's default `SPC n r d` prefix map for dailies.
+   ;; Put DOI import on a separate top-level key.
+   (map! :leader
+         :desc "Import DOI to bib" "n R" #'my/citar-import-doi)
   
    (defun my/org-format-buffer ()
     "Format org buffer with stable, idempotent spacing rules."
@@ -2678,7 +2816,6 @@ Simple, clean formatting for org files:
         (delete-char -1))))
 
    ;; Run the formatter automatically on save.
-    )
 #+end_src
 
 * Org Inline Images
