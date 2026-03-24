@@ -2216,17 +2216,69 @@ Simple, clean formatting for org files:
 #+begin_src emacs-lisp
 (after! org
   ;; Set up org-capture templates for inbox
-  (setq org-capture-templates
-        '(("i" "Inbox TODO" entry
-           (file+olp "~/Documents/brain2/inbox.org" "Global")
-           "** TODO %?\n"
-           :empty-lines 1)
-          ("w" "Weekly TODO" entry
-           (file+olp "~/Documents/brain2/inbox.org" "This Week")
-           "** TODO %?\n"
-           :empty-lines 1)))
+   (setq org-capture-templates
+         '(("i" "Inbox TODO" entry
+            (file+olp "~/Documents/brain2/inbox.org" "Global")
+            "** TODO %?\n"
+            :empty-lines 1)
+           ("w" "Weekly TODO" entry
+            (file+olp "~/Documents/brain2/inbox.org" "This Week")
+            "** TODO %?\n"
+            :empty-lines 1)
+           ("D" "Document (LaTeX export)" plain
+            "%?\n"
+            (file+head "concepts/%<%Y-%m-%d_%H%M%S>.org"
+                       "#+TITLE: %^{Title}\n#+AUTHOR: %^{Author|Crocodile}\n#+DATE: %^{Date|%<%Y-%m-%d>}\n#+FILETAGS: :document:\n#+LATEX_CLASS: %^{LaTeX class|essay|article|report}\n#+OPTIONS: toc:%^{TOC|nil|t} num:%^{num|nil|t}\n")
+             :unnarrowed t)))
+   
+   ;; Define custom LaTeX export classes for essay, article, and report
+   ;; These classes handle document formatting and margins site-wide
+   (with-eval-after-load 'ox-latex
+     (unless (boundp 'org-latex-classes)
+       (setq org-latex-classes nil))
+     
+     ;; essay: centered title/author/date, compact margins
+     (add-to-list 'org-latex-classes
+                  (list "essay"
+                        (concat "\\documentclass[11pt]{article}\n"
+                                "\\usepackage[a4paper,top=2.5cm,bottom=2.0cm,left=2.5cm,right=2.5cm]{geometry}\n"
+                                "\\usepackage{microtype}\n"
+                                "\\usepackage{titling}\n"
+                                "\\pretitle{\\begin{center}\\LARGE}\\posttitle{\\par\\end{center}}\n"
+                                "\\preauthor{\\begin{center}\\large}\\postauthor{\\par\\end{center}}\n"
+                                "\\predate{\\begin{center}\\small}\\postdate{\\par\\end{center}}\n")
+                        '("\\section{%s}" . "\\section*{%s}")
+                        '("\\subsection{%s}" . "\\subsection*{%s}")
+                        '("\\subsubsection{%s}" . "\\subsubsection*{%s}")
+                        '("\\paragraph{%s}" . "\\paragraph*{%s}")
+                        '("\\subparagraph{%s}" . "\\subparagraph*{%s}")))
+     
+     ;; article: uses fancyhdr to show page numbers in header
+     (add-to-list 'org-latex-classes
+                  (list "article"
+                        (concat "\\documentclass[11pt]{article}\n"
+                                "\\usepackage[a4paper,margin=2.5cm]{geometry}\n"
+                                "\\usepackage{microtype}\n"
+                                "\\usepackage{fancyhdr}\n"
+                                "\\pagestyle{fancy}\n"
+                                "\\fancyhf{}\n"
+                                "\\fancyhead[LE,RO]{\\thepage}\n"
+                                "\\fancyhead[RE,LO]{\\nouppercase{\\leftmark}}\n")
+                        '("\\section{%s}" . "\\section*{%s}")
+                        '("\\subsection{%s}" . "\\subsection*{%s}")))
+     
+     ;; report: chapter support and larger default font
+     (add-to-list 'org-latex-classes
+                  (list "report"
+                        (concat "\\documentclass[12pt]{report}\n"
+                                "\\usepackage[a4paper,margin=3cm]{geometry}\n"
+                                "\\usepackage{microtype}\n"
+                                "\\usepackage{fancyhdr}\n"
+                                "\\pagestyle{plain}\n")
+                        '("\\chapter{%s}" . "\\chapter*{%s}")
+                        '("\\section{%s}" . "\\section*{%s}"))))
   
-  (defun my/org-format-buffer ()
+   (defun my/org-format-buffer ()
     "Format org buffer with consistent, clean spacing matching example.org style."
     (interactive)
     (save-excursion
