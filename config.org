@@ -2659,8 +2659,250 @@ Simple, clean formatting for org files:
            (if (executable-find "biber")
                '((latex biblatex "style=apa,backend=biber")
                  (t csl "apa.csl"))
-             '((latex csl "apa.csl")
+                '((latex csl "apa.csl")
                (t csl "apa.csl")))))
+
+   ;; Make `citar-insert-reference` render CSL/APA-style references instead of
+   ;; the short preview template.
+   (with-eval-after-load 'citar
+     (require 'citar-citeproc)
+     (defun my/citar-citeproc-format-reference-org (keys &optional style)
+       "Return formatted references for KEYS as Org markup with CSL.
+This preserves emphasis and clickable links in Org buffers."
+       (when (or (null citar-citeproc-csl-style) current-prefix-arg)
+         (citar-citeproc-select-csl-style))
+       (when-let* ((localesdir (or citar-citeproc-csl-locales-dir
+                                   org-cite-csl--fallback-locales-dir))
+                   (stylesdir (or citar-citeproc-csl-styles-dir
+                                  org-cite-csl--fallback-locales-dir))
+                   (style (or style
+                              (if (string-match-p "/" citar-citeproc-csl-style)
+                                  citar-citeproc-csl-style
+                                (expand-file-name citar-citeproc-csl-style stylesdir))))
+                   (proc (citeproc-create style
+                                          #'citar-citeproc--itemgetter
+                                          (citeproc-locale-getter-from-dir localesdir)
+                                          "en-US"))
+                   (rendered (progn
+                               (citeproc-add-uncited keys proc)
+                               (citeproc-render-bib proc 'org)))
+                  (refs (car rendered))
+                  (text (string-trim
+                         (if (listp refs)
+                             (mapconcat #'identity refs "\n")
+                           refs))))
+         ;; Remove citeproc-internal anchors and force DOI URLs to explicit
+         ;; org links so they are unambiguously followable at point.
+         (setq text (replace-regexp-in-string "<<[^>]+>>" "" text))
+         (setq text (replace-regexp-in-string
+                     "\\(https://doi\\.org/[A-Za-z0-9._;()/:+-]+\\)"
+                     "[[\\1][\\1]]"
+                     text))
+         text))
+
+     (defun my/org-cite-keys-in-buffer ()
+       "Return citation keys used in current Org buffer, in appearance order."
+       (delete-dups
+        (org-element-map (org-element-parse-buffer) 'citation-reference
+          (lambda (ref) (org-element-property :key ref)))))
+
+     (defun my/org-roam-ref-keys-in-buffer ()
+       "Return citekeys found in top-level :ROAM_REFS: as @key tokens."
+       (save-excursion
+         (goto-char (point-min))
+         (if (re-search-forward "^:ROAM_REFS:[[:space:]]*\\(.+\\)$" nil t)
+             (let ((refs (match-string-no-properties 1))
+                   (keys nil))
+               (dolist (tok (split-string refs "[[:space:]]+" t))
+                 (when (string-match "\\`@\\([^,;[:space:]]+\\)\\'" tok)
+                   (push (match-string 1 tok) keys)))
+               (nreverse keys))
+           nil)))
+
+     (defun my/org--ensure-references-heading ()
+       "Return bounds (BEG . END) of the `* References` section body.
+Create the heading at EOF when missing."
+       (save-excursion
+         (goto-char (point-min))
+         (unless (re-search-forward "^\\*+ References\\(?:\\s-.*\\)?$" nil t)
+           (goto-char (point-max))
+           (unless (bolp) (insert "\n"))
+           (insert "\n* References\n"))
+         (beginning-of-line)
+         (org-end-of-meta-data t)
+         (let ((beg (point)))
+           (org-end-of-subtree t t)
+           (cons beg (point)))))
+
+     (defun my/org-refresh-reference-bullets ()
+       "Regenerate `* References` as formatted bullet points from cite keys.
+Uses all citation keys present in the current note."
+       (interactive)
+       (unless (derived-mode-p 'org-mode)
+         (user-error "This command only works in org-mode"))
+       (let* ((keys (delete-dups
+                     (append (my/org-cite-keys-in-buffer)
+                             (my/org-roam-ref-keys-in-buffer))))
+              (bounds (my/org--ensure-references-heading))
+              (beg (car bounds))
+              (end (cdr bounds)))
+         (save-excursion
+           (delete-region beg end)
+           (goto-char beg)
+           (if (null keys)
+               (insert "- No citations yet.\n")
+             (dolist (key keys)
+               (insert "- "
+                       (my/citar-citeproc-format-reference-org (list key))
+                       "\n"))))
+         (message "Updated references bullets (%d)" (length keys))))
+
+     (defvar-local my/org-cite-preview-overlays nil
+       "Overlays used to display citation previews in writeroom mode.")
+
+     (defvar-local my/org-cite-preview-refresh-timer nil
+       "Idle timer used to refresh citation previews after edits.")
+
+     (defun my/citar--surname-token (name)
+       "Extract surname/label token from a single NAME string."
+       (let ((name (replace-regexp-in-string "[{}]" "" (or name ""))))
+         (cond
+          ((string-match "\\`\\s-*\\([^,]+\\)," name)
+           (string-trim (match-string 1 name)))
+          ((string-match "\\`\\s-*\\([^ ]+\\)" name)
+           (string-trim (match-string 1 name)))
+          (t nil))))
+
+     (defun my/citar--author-tokens (key)
+       "Return list of author/editor surname tokens for citation KEY."
+       (let* ((names (or (citar-get-value "author" key)
+                         (citar-get-value "editor" key)
+                         ""))
+              (parts (split-string names "\\s-+and\\s-+" t)))
+         (delq nil (mapcar #'my/citar--surname-token parts))))
+
+     (defun my/citar--apa-author-part (key textual)
+       "Return APA in-text author part for KEY.
+When TEXTUAL is non-nil, format for narrative citations."
+       (let ((tokens (my/citar--author-tokens key)))
+         (cond
+          ((null tokens) key)
+          ((= (length tokens) 1) (car tokens))
+          ((= (length tokens) 2)
+           (format "%s %s %s"
+                   (nth 0 tokens)
+                   (if textual "and" "&")
+                   (nth 1 tokens)))
+          (t
+           (format "%s et al." (car tokens))))))
+
+     (defun my/citar--year-token (key)
+       "Return a 4-digit year token for citation KEY."
+       (let ((year (or (citar-get-value "year" key)
+                       (citar-get-value "issued" key)
+                       (citar-get-value "date" key))))
+         (if (and year (string-match "\\([0-9]\\{4\\}\\)" year))
+             (match-string 1 year)
+           "n.d.")))
+
+     (defun my/citar--author-year (key)
+       "Return (AUTHOR . YEAR) for citation KEY."
+       (let* ((author (my/citar--apa-author-part key nil))
+              (year (my/citar--year-token key)))
+         (cons author year)))
+
+     (defun my/citar--author-year-fragment (key)
+       "Return an AUTHOR, YEAR fragment for KEY."
+       (pcase-let ((`(,author . ,year) (my/citar--author-year key)))
+         (format "%s, %s" author year)))
+
+     (defun my/org-citation-preview-string (citation)
+       "Return visual preview text for org CITATION element.
+Returns nil when preview should not be applied."
+       (let* ((style (org-element-property :style citation))
+              (refs (org-cite-get-references citation))
+              ;; Keep complex citations untouched for correctness.
+              (simple-p (not (seq-some
+                              (lambda (r)
+                                (or (org-element-property :prefix r)
+                                    (org-element-property :suffix r)
+                                    (org-element-property :locator r)))
+                              refs))))
+         (when simple-p
+           (let ((parts (mapcar (lambda (r)
+                                  (my/citar--author-year-fragment
+                                   (org-element-property :key r)))
+                                refs)))
+             (if (equal style "t")
+                 ;; textual: Author (Year)
+                 (mapconcat
+                  (lambda (r)
+                    (let* ((key (org-element-property :key r))
+                           (author (my/citar--apa-author-part key t))
+                           (year (my/citar--year-token key)))
+                      (format "%s (%s)" author year)))
+                  refs
+                  "; ")
+               ;; default/parenthetical
+               (format "(%s)" (mapconcat #'identity parts "; ")))))))
+
+     (defun my/org-clear-citation-previews ()
+       "Remove all citation preview overlays in current buffer."
+       (when my/org-cite-preview-refresh-timer
+         (cancel-timer my/org-cite-preview-refresh-timer)
+         (setq my/org-cite-preview-refresh-timer nil))
+       (mapc #'delete-overlay my/org-cite-preview-overlays)
+       (setq my/org-cite-preview-overlays nil))
+
+     (defun my/org-apply-citation-previews ()
+       "Apply citation preview overlays for writeroom in current Org buffer."
+       (interactive)
+       (my/org-clear-citation-previews)
+       (when (and writeroom-mode (derived-mode-p 'org-mode) (require 'citar nil t))
+         (org-element-map (org-element-parse-buffer) 'citation
+           (lambda (cit)
+             (let ((preview (my/org-citation-preview-string cit)))
+               (when (and preview (not (string-empty-p preview)))
+                 (let* ((beg (org-element-property :begin cit))
+                        (end (org-element-property :end cit))
+                        (post-blank (or (org-element-property :post-blank cit) 0))
+                        (display-end (max beg (- end post-blank)))
+                        (ov (make-overlay beg display-end)))
+                   (overlay-put ov 'display preview)
+                   (overlay-put ov 'evaporate t)
+                   (overlay-put ov 'help-echo
+                                (buffer-substring-no-properties beg display-end))
+                   (push ov my/org-cite-preview-overlays))))))))
+
+     (defun my/org-schedule-citation-preview-refresh (&rest _)
+       "Schedule delayed citation preview refresh for current buffer."
+       (when (and writeroom-mode (derived-mode-p 'org-mode))
+         (when my/org-cite-preview-refresh-timer
+           (cancel-timer my/org-cite-preview-refresh-timer))
+         (setq my/org-cite-preview-refresh-timer
+               (run-with-idle-timer
+                0.35 nil
+                (lambda (buf)
+                  (when (buffer-live-p buf)
+                    (with-current-buffer buf
+                      (when (and writeroom-mode (derived-mode-p 'org-mode))
+                        (my/org-apply-citation-previews)))))
+                (current-buffer)))))
+
+     (defun my/org-enable-citation-previews ()
+       "Enable writeroom citation previews in current Org buffer."
+       (when (derived-mode-p 'org-mode)
+         (add-hook 'after-change-functions #'my/org-schedule-citation-preview-refresh nil t)
+         (my/org-apply-citation-previews)))
+
+     (defun my/org-disable-citation-previews ()
+       "Disable writeroom citation previews in current Org buffer."
+       (remove-hook 'after-change-functions #'my/org-schedule-citation-preview-refresh t)
+       (my/org-clear-citation-previews))
+
+     (setq citar-citeproc-csl-styles-dir org-cite-csl-styles-dir
+           citar-citeproc-csl-style "apa.csl"
+           citar-format-reference-function #'my/citar-citeproc-format-reference-org))
 
    ;; Use latexmk so biblatex/biber flows are handled during PDF export.
    (with-eval-after-load 'ox-latex
@@ -2735,11 +2977,104 @@ Simple, clean formatting for org files:
             (write-region (point-min) (point-max) bib-file nil 'silent))
           (message "Imported DOI into %s" bib-file))))))
 
-   ;; Quality-of-life shortcut in org/latex/bibtex buffers.
-   ;; Keep Doom's default `SPC n r d` prefix map for dailies.
-   ;; Put DOI import on a separate top-level key.
+   (defun my/citar--slugify-key (text)
+     "Convert TEXT into a simple BibTeX-safe key fragment."
+     (let* ((text (downcase (string-trim (or text ""))))
+            (text (replace-regexp-in-string "[^[:alnum:]]+" "_" text))
+            (text (replace-regexp-in-string "_+" "_" text))
+            (text (replace-regexp-in-string "\\`_\\|_\\'" "" text)))
+       (if (string-empty-p text) "ref" text)))
+
+   (defun my/citar--sanitize-field (text)
+     "Normalize TEXT for single-line BibTeX field values."
+     (string-trim (replace-regexp-in-string "[\n\r\t]+" " " (or text ""))))
+
+   (defun my/citar--default-key (author-or-org year title)
+     "Build a default citation key from AUTHOR-OR-ORG, YEAR, and TITLE."
+     (let* ((head (if (and author-or-org
+                           (string-match "\\`\\s-*\\([^,; ]+\\)" author-or-org))
+                      (match-string 1 author-or-org)
+                    "ref"))
+            (year (if (string-empty-p (or year ""))
+                      (format-time-string "%Y")
+                    year)))
+       (my/citar--slugify-key (format "%s_%s_%s" head year (or title "")))))
+
+   (defun my/citar--bib-key-exists-p (bib-file key)
+     "Return non-nil when KEY already exists in BIB-FILE."
+     (when (file-exists-p bib-file)
+       (with-temp-buffer
+         (insert-file-contents bib-file)
+         (goto-char (point-min))
+         (re-search-forward (concat "@.+[{(]" (regexp-quote key) ",") nil t))))
+
+   (defun my/citar-add-online (&optional key author title year url urldate note)
+     "Add a website citation (`@online`) to `citar-bibliography`.
+Prompts interactively when arguments are nil."
+     (interactive)
+     (let* ((bib-file (car citar-bibliography))
+            (author (my/citar--sanitize-field
+                     (or author (read-string "Author/Org (optional): "))))
+            (title (my/citar--sanitize-field
+                    (or title (read-string "Title: "))))
+            (year (my/citar--sanitize-field
+                   (or year (read-string "Year: " (format-time-string "%Y")))))
+            (url (my/citar--sanitize-field
+                  (or url (read-string "URL: "))))
+            (urldate (my/citar--sanitize-field
+                      (or urldate (read-string "Access date (YYYY-MM-DD): "
+                                               (format-time-string "%Y-%m-%d")))))
+            (note (my/citar--sanitize-field
+                   (or note (read-string "Note (optional): "))))
+            (default-key (my/citar--default-key author year title))
+            (key (my/citar--slugify-key
+                  (or key (read-string "Citation key: " default-key)))))
+       (unless (and bib-file (not (string-empty-p bib-file)))
+         (user-error "No bibliography file configured"))
+       (unless (or (file-writable-p bib-file)
+                   (file-writable-p (file-name-directory bib-file)))
+         (user-error "Bibliography path is not writable: %s" bib-file))
+       (when (string-empty-p title)
+         (user-error "Title is required"))
+       (when (string-empty-p url)
+         (user-error "URL is required"))
+       (when (or (string-empty-p key) (my/citar--bib-key-exists-p bib-file key))
+         (user-error "Citation key already exists or invalid: %s" key))
+       (let* ((fields (delq nil
+                            (list (and (not (string-empty-p author))
+                                       (cons "author" author))
+                                  (cons "title" title)
+                                  (and (not (string-empty-p year))
+                                       (cons "year" year))
+                                  (cons "url" url)
+                                  (and (not (string-empty-p urldate))
+                                       (cons "urldate" urldate))
+                                  (and (not (string-empty-p note))
+                                       (cons "note" note)))))
+              (body (mapconcat (lambda (kv)
+                                 (format "  %-7s = {%s}" (car kv) (cdr kv)))
+                               fields
+                               ",\n"))
+              (entry (format "@online{%s,\n%s\n}\n" key body)))
+         (with-temp-buffer
+           (when (file-exists-p bib-file)
+             (insert-file-contents bib-file))
+           (goto-char (point-max))
+           (unless (or (bobp) (bolp))
+             (insert "\n"))
+           (insert entry "\n")
+           (write-region (point-min) (point-max) bib-file nil 'silent))
+         (message "Added @online entry %s to %s" key bib-file))))
+
+   ;; Bibliography shortcuts. Keep Doom's `SPC n r d` dailies map intact.
    (map! :leader
-         :desc "Import DOI to bib" "n R" #'my/citar-import-doi)
+         :desc "Import DOI to bib" "n R" #'my/citar-import-doi
+         (:prefix ("n B" . "bibliography")
+          :desc "Import DOI" "d" #'my/citar-import-doi
+          :desc "Add website citation" "w" #'my/citar-add-online
+          :desc "Attach file to cite key" "f" #'citar-add-file-to-library
+          :desc "Refresh note refs" "r" #'my/org-refresh-reference-bullets
+          :desc "Open bibliography" "b" (cmd! (find-file (car citar-bibliography)))))
   
    (defun my/org-format-buffer ()
     "Format org buffer with stable, idempotent spacing rules."
@@ -2994,6 +3329,7 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
             (variable-pitch-mode 1)  ; Use proportional font for prose
             (setq-local org-image-align 'center)  ; Center image previews in zen mode
             (setq-local org-image-actual-width '(0.8)) ; Scale images to ~80% window width
+            (my/org-enable-citation-previews)
             ;; Hide property drawers on zen entry for cleaner writing view.
             (if (fboundp 'org-fold-hide-drawer-all)
                 (org-fold-hide-drawer-all (point-min) (point-max))
@@ -3008,6 +3344,7 @@ Configure zen mode (writeroom-mode) with variable-pitch font for comfortable pro
         (when (derived-mode-p 'org-mode)
           (setq-local org-modern-hide-stars 'leading)
           (variable-pitch-mode -1)
+          (my/org-disable-citation-previews)
           (setq-local org-image-align 'left)  ; Restore left alignment
           (when (or (bound-and-true-p org-link-preview-overlays)
                     (bound-and-true-p org-inline-image-overlays))
