@@ -814,11 +814,11 @@ My capture templates support different types of content in my knowledge system:
            :unnarrowed t)
            ("c" "Concept node" plain
             "* Overview\n%?\n* Context\n* Relations\n* Applications\n* References"
-            :if-new (file+head "concepts/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :concept:seed:\n")
+            :if-new (file+head "concepts/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :concept:\n")
             :unnarrowed t)
            ("rd" "Reading note" plain
             "* Summary\n%?\n* Key Claims\n* Methods\n* Critical Reflections\n* Links"
-            :if-new (file+head "readings/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :reading:seed:\n:PROPERTIES:\n:ROAM_REFS: ${ref}\n:END:\n")
+            :if-new (file+head "readings/${slug}.org" "#+TITLE: ${title}\n#+FILETAGS: :reading:\n:PROPERTIES:\n:ROAM_REFS: ${ref}\n:END:\n")
             :unnarrowed t)
            ("r" "Recipe" plain
             "* Ingredients\n\n- \n\n* Prep\n\n- \n\n* Procedure\n\n1. \n\n* Notes\n\n%?"
@@ -945,7 +945,7 @@ It does NOT delete or replace the original heading."
         ;; Create scaffold if file doesn't exist
         (unless (file-exists-p file)
           (with-temp-file file
-            (insert ":PROPERTIES:\n:END:\n#+TITLE: " title "\n#+FILETAGS: :concept:seed:\n\n* Overview\n\n* Context\n* Relations\n* Applications\n* References\n")))
+            (insert ":PROPERTIES:\n:END:\n#+TITLE: " title "\n#+FILETAGS: :concept::\n\n* Overview\n\n* Context\n* Relations\n* Applications\n* References\n")))
         ;; Transfer or create ID: use heading's existing ID if present, otherwise generate new one
         (let ((new-id (if orig-id
                           ;; Use the original heading's ID for the new file
