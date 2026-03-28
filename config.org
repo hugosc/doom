@@ -2,6 +2,7 @@
 #+AUTHOR: Crocodile
 
 * Table of Contents :TOC:
+
 - [[#introduction][Introduction]]
 - [[#basic-settings][Basic Settings]]
   - [[#directories][Directories]]
@@ -1114,19 +1115,19 @@ All links inserted are file links, so inline toggling works with Org 9.8 preview
     (cond
       ;; Yazi file:// URI workflow
       (is-valid-file
-       (my/org-copy-file-into-file-attach-dir filepath))
+       (my/org-copy-file-into-file-attach-dir filepath t))
       ;; Remote URL in clipboard (download explicitly to avoid package timing issues)
       (is-web-url
        (condition-case err
-           (my/org-download-url-into-file-attach-dir clipboard-text)
+           (my/org-download-url-into-file-attach-dir clipboard-text t)
          (error
-            (user-error "Clipboard URL is not a downloadable image/PDF (or fetch failed): %s"
-                        (error-message-string err)))))
+             (user-error "Clipboard URL is not a downloadable image/PDF (or fetch failed): %s"
+                         (error-message-string err)))))
       ;; Screenshot workflow
       (t
         (condition-case err
             (progn
-              (my/org-paste-clipboard-image-to-file-attach-dir))
+              (my/org-paste-clipboard-image-to-file-attach-dir t))
           (error
             (user-error "No image found in clipboard. Please copy an image (screenshot) or file from Yazi first. Error: %s" 
                        (error-message-string err))))))))
@@ -1142,8 +1143,51 @@ All links inserted are file links, so inline toggling works with Org 9.8 preview
             n (1+ n)))
     candidate))
 
-(defun my/org-copy-file-into-file-attach-dir (filepath)
-  "Copy FILEPATH into this note's file-based attach dir and insert a file link."
+(defun my/org--sanitize-attachment-stem (stem)
+  "Sanitize attachment STEM for safe filename use."
+  (let* ((stem (string-trim (or stem "")))
+         (stem (replace-regexp-in-string "[/\\\n\r\t]" "_" stem))
+         (stem (replace-regexp-in-string "[[:space:]]+" "_" stem)))
+    (if (string-empty-p stem) "attachment" stem)))
+
+(defun my/org--maybe-rename-and-describe-attachment (dest-path &optional prompt)
+  "Return (FINAL-PATH . DESCRIPTION) for DEST-PATH.
+When PROMPT is non-nil, ask for filename stem and optional link description."
+  (let ((final-path dest-path)
+        (desc nil))
+    (when prompt
+      (let* ((dir (file-name-directory dest-path))
+             (ext (or (file-name-extension dest-path t) ""))
+             (default-stem (file-name-sans-extension (file-name-nondirectory dest-path)))
+             (input-stem (read-string (format "Filename (without %s): " ext)
+                                      default-stem nil default-stem))
+             (stem (my/org--sanitize-attachment-stem input-stem)))
+        (unless (string= stem default-stem)
+          (let ((candidate (expand-file-name (concat stem ext) dir)))
+            (when (and (file-exists-p candidate)
+                       (not (file-equal-p candidate dest-path)))
+              (setq candidate (my/org--unique-destination-file dir (concat stem ext))))
+            (rename-file dest-path candidate t)
+            (setq final-path candidate))))
+      (let ((input-desc (string-trim (read-string "Attachment description (optional): "))))
+        (unless (string-empty-p input-desc)
+          (setq desc input-desc))))
+    (cons final-path desc)))
+
+(defun my/org--insert-attachment-file-link (dest-path &optional description)
+  "Insert Org file link to DEST-PATH using optional DESCRIPTION.
+Returns the inserted path relative to current buffer file."
+  (let* ((desc (and description (string-trim description)))
+         (desc (unless (string-empty-p (or desc "")) desc))
+         (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
+    (unless (bolp) (insert "\n"))
+    (insert (org-link-make-string (concat "file:" (org-link-escape rel-path)) desc) "\n")
+    (my/org-refresh-inline-previews (point-min) (point-max))
+    rel-path))
+
+(defun my/org-copy-file-into-file-attach-dir (filepath &optional prompt-metadata)
+  "Copy FILEPATH into this note's file attach dir and insert a file link.
+When PROMPT-METADATA is non-nil, prompt for filename and link description."
   (unless (and (derived-mode-p 'org-mode) buffer-file-name)
     (user-error "Must be in a file-backed org-mode buffer"))
   (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
@@ -1153,10 +1197,10 @@ All links inserted are file links, so inline toggling works with Org 9.8 preview
                       (my/org--unique-destination-file dest-dir src-name)))
          (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
     (copy-file filepath dest-path nil)
-    (unless (bolp) (insert "\n"))
-    (insert (org-link-make-string (concat "file:" (org-link-escape rel-path))) "\n")
-    (my/org-refresh-inline-previews (point-min) (point-max))
-    (message "Copied to %s" rel-path)))
+    (pcase-let* ((`(,final-path . ,desc)
+                  (my/org--maybe-rename-and-describe-attachment dest-path prompt-metadata))
+                 (final-rel (my/org--insert-attachment-file-link final-path desc)))
+      (message "Copied to %s" final-rel))))
 
 (defun my/org--buffer-prefix-p (s)
   "Return non-nil if current buffer starts with byte string S."
@@ -1191,9 +1235,10 @@ All links inserted are file links, so inline toggling works with Org 9.8 preview
     "image/svg+xml")
    (t nil)))
 
-(defun my/org-paste-clipboard-image-to-file-attach-dir ()
+(defun my/org-paste-clipboard-image-to-file-attach-dir (&optional prompt-metadata)
   "Paste clipboard image into this note's file attach dir and insert a file link.
-This avoids creating heading-level ID drawers."
+This avoids creating heading-level ID drawers.
+When PROMPT-METADATA is non-nil, prompt for filename and link description."
   (unless (and (derived-mode-p 'org-mode) buffer-file-name)
     (user-error "Must be in a file-backed org-mode buffer"))
   (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
@@ -1260,18 +1305,24 @@ This avoids creating heading-level ID drawers."
              (dest-path (progn
                           (make-directory dest-dir t)
                           (my/org--unique-destination-file dest-dir filename)))
-             (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
+             (final-path nil)
+             (final-rel nil)
+             (desc nil))
         (with-temp-file dest-path
           (set-buffer-multibyte nil)
           (insert image-bytes))
         (ignore-errors (image-flush dest-path))
-        (unless (bolp) (insert "\n"))
-        (insert (org-link-make-string (concat "file:" (org-link-escape rel-path))) "\n")
-        (my/org-refresh-inline-previews (point-min) (point-max))
-        (message "Pasted clipboard image to %s" rel-path)))))
+        (pcase-let ((`(,renamed-path . ,maybe-desc)
+                     (my/org--maybe-rename-and-describe-attachment dest-path prompt-metadata)))
+          (setq final-path renamed-path
+                desc maybe-desc))
+        (ignore-errors (image-flush final-path))
+        (setq final-rel (my/org--insert-attachment-file-link final-path desc))
+        (message "Pasted clipboard image to %s" final-rel)))))
 
-(defun my/org-download-url-into-file-attach-dir (url)
-  "Download URL into this note's attach dir and insert a file link."
+(defun my/org-download-url-into-file-attach-dir (url &optional prompt-metadata)
+  "Download URL into this note's attach dir and insert a file link.
+When PROMPT-METADATA is non-nil, prompt for filename and link description."
   (unless (and (derived-mode-p 'org-mode) buffer-file-name)
     (user-error "Must be in a file-backed org-mode buffer"))
   (let* ((dest-dir (my/org-file-attach-dir buffer-file-name))
@@ -1285,13 +1336,12 @@ This avoids creating heading-level ID drawers."
          (filename (format "%s%s" (format-time-string tsfmt) safe-name))
          (dest-path (progn
                       (make-directory dest-dir t)
-                      (my/org--unique-destination-file dest-dir filename)))
-         (rel-path (file-relative-name dest-path (file-name-directory buffer-file-name))))
+                      (my/org--unique-destination-file dest-dir filename))))
     (url-copy-file url dest-path t)
-    (unless (bolp) (insert "\n"))
-    (insert (org-link-make-string (concat "file:" (org-link-escape rel-path))) "\n")
-    (my/org-refresh-inline-previews (point-min) (point-max))
-    (message "Downloaded URL to %s" rel-path)))
+    (pcase-let* ((`(,final-path . ,desc)
+                  (my/org--maybe-rename-and-describe-attachment dest-path prompt-metadata))
+                 (final-rel (my/org--insert-attachment-file-link final-path desc)))
+      (message "Downloaded URL to %s" final-rel))))
 
 (defun my/org-remove-empty-id-drawers-in-current-buffer ()
   "Remove empty property drawers under headings in current Org buffer.
@@ -3162,9 +3212,12 @@ To view the full resolution, open the image externally with =RET= on the link.
 
 #+begin_src emacs-lisp
 (after! org
+  ;; Keep insert-state typing literal: don't define a local `z` prefix in org-mode-map.
+  (define-key org-mode-map (kbd "z") nil)
+
   ;; Display images at max 800px width instead of full resolution
   ;; This reduces rendering overhead for large screenshots
-  (setq org-image-actual-width 600)
+  (setq org-image-actual-width 500)
   ;; Keep property drawers folded by default in Org buffers.
   (setq org-cycle-hide-drawer-startup t)
   ;; Left-align by default (centered in writeroom mode via hook below)
@@ -3224,16 +3277,144 @@ Without ARG, this toggles previews across the whole accessible buffer."
      (t
       (org-toggle-inline-images arg))))
 
-  ;; Keep `z i` stable after Org 9.8's preview API changes.
-  (map! :map org-mode-map
-        :n "zi" #'my/org-toggle-inline-previews
-        :n "z i" #'my/org-toggle-inline-previews)
-
   ;; Make the stock Org key use the same full-buffer toggle behavior.
   (define-key org-mode-map (kbd "C-c C-x C-v") #'my/org-toggle-inline-previews))
 
-;; Doom binds `zi` in `evil-org-mode-map`; override that too.
+(after! org
+  (defvar-local my/org-highlight-latex-and-related-prev nil
+    "Saved value of `org-highlight-latex-and-related' before previewing.")
 
+  (defun my/org-latex-preview-appearance-sync ()
+    "Hide LaTeX source highlighting while preview overlays are visible."
+    (when (derived-mode-p 'org-mode)
+      (if (my/org-latex-buffer-preview-visible-p)
+          (progn
+            (unless (local-variable-p 'my/org-highlight-latex-and-related-prev)
+              (setq-local my/org-highlight-latex-and-related-prev
+                          org-highlight-latex-and-related))
+            (setq-local org-highlight-latex-and-related nil)
+            (font-lock-flush))
+        (when (local-variable-p 'my/org-highlight-latex-and-related-prev)
+          (setq-local org-highlight-latex-and-related
+                      my/org-highlight-latex-and-related-prev)
+          (kill-local-variable 'my/org-highlight-latex-and-related-prev)
+          (font-lock-flush)))))
+
+  (defun my/org-latex-preview-overlay-p (ov)
+    "Return non-nil when OV is a LaTeX/image preview overlay."
+    (or (eq (overlay-get ov 'org-overlay-type) 'org-latex-overlay)
+        (overlay-get ov 'preview-state)
+        (overlay-get ov 'org-image-overlay)))
+
+  (defun my/org-latex-fragment-previewed-p (beg end)
+    "Return non-nil when BEG..END already has a LaTeX preview overlay."
+    (cl-some #'my/org-latex-preview-overlay-p (overlays-in beg end)))
+
+  (defun my/org-latex-buffer-preview-visible-p ()
+    "Return non-nil if current buffer has any LaTeX preview overlays."
+    (cl-some #'my/org-latex-preview-overlay-p
+             (overlays-in (point-min) (point-max))))
+
+  (defun my/org-clear-latex-buffer-previews ()
+    "Clear all LaTeX previews in current Org buffer."
+    (interactive)
+    (when (fboundp 'org-clear-latex-preview)
+      (org-clear-latex-preview (point-min) (point-max)))
+    ;; Belt-and-suspenders cleanup for mixed overlay states.
+    (dolist (ov (overlays-in (point-min) (point-max)))
+      (when (my/org-latex-preview-overlay-p ov)
+        (delete-overlay ov)))
+    (my/org-latex-preview-appearance-sync))
+
+  (defun my/org-latex-fragment-bounds-at-point ()
+    "Return (BEG . END) for LaTeX fragment/environment at point, else nil."
+    (let ((datum (org-element-context)))
+      (when (org-element-type-p datum '(latex-environment latex-fragment))
+        (cons (org-element-begin datum) (org-element-end datum)))))
+
+  (defun my/org-latex-preview-at-point-if-needed ()
+    "Auto-preview LaTeX fragment at point when not already previewed."
+    (when (and (derived-mode-p 'org-mode)
+               (display-graphic-p)
+               my/org-latex-preview-auto-mode)
+      (when-let* ((bounds (my/org-latex-fragment-bounds-at-point))
+                  (beg (car bounds))
+                  (end (cdr bounds)))
+        (unless (my/org-latex-fragment-previewed-p beg end)
+          (org--latex-preview-region beg end)))))
+
+  (defun my/org-render-latex-buffer-previews ()
+    "Render LaTeX previews for the whole current Org buffer."
+    (org-latex-preview '(16)))
+
+  (defvar-local my/org-latex-auto-preview-timer nil
+    "Idle timer used by `my/org-latex-preview-auto-mode'.")
+
+  (defun my/org-schedule-latex-auto-preview (&rest _)
+    "Schedule an idle LaTeX auto-preview refresh at point."
+    (when (and my/org-latex-preview-auto-mode (derived-mode-p 'org-mode))
+      (when my/org-latex-auto-preview-timer
+        (cancel-timer my/org-latex-auto-preview-timer))
+      (setq my/org-latex-auto-preview-timer
+            (run-with-idle-timer
+             0.35 nil
+              (lambda (buf)
+                (when (buffer-live-p buf)
+                  (with-current-buffer buf
+                    (my/org-latex-preview-at-point-if-needed)
+                    (my/org-latex-preview-appearance-sync))))
+             (current-buffer)))))
+
+  (define-minor-mode my/org-latex-preview-auto-mode
+    "Auto-preview LaTeX at point while editing Org buffers."
+    :init-value nil
+    :lighter " LaTeX*"
+    (if my/org-latex-preview-auto-mode
+        (progn
+          (add-hook 'post-command-hook #'my/org-schedule-latex-auto-preview nil t)
+          (add-hook 'after-change-functions #'my/org-schedule-latex-auto-preview nil t)
+          (my/org-schedule-latex-auto-preview))
+      (remove-hook 'post-command-hook #'my/org-schedule-latex-auto-preview t)
+      (remove-hook 'after-change-functions #'my/org-schedule-latex-auto-preview t)
+      (when my/org-latex-auto-preview-timer
+        (cancel-timer my/org-latex-auto-preview-timer)
+        (setq my/org-latex-auto-preview-timer nil))))
+
+  (defun my/org-toggle-latex-auto-preview-mode ()
+    "Toggle automatic LaTeX preview-at-point and report state." 
+    (interactive)
+    (my/org-latex-preview-auto-mode (if my/org-latex-preview-auto-mode -1 1))
+    (message "LaTeX auto-preview %s"
+             (if my/org-latex-preview-auto-mode "enabled" "disabled")))
+
+  (defun my/org-toggle-latex-buffer-previews ()
+    "Toggle LaTeX previews for the whole current Org buffer."
+    (interactive)
+    (unless (derived-mode-p 'org-mode)
+      (user-error "Not in an Org buffer"))
+    (if (my/org-latex-buffer-preview-visible-p)
+        (progn
+          (my/org-clear-latex-buffer-previews)
+          (message "LaTeX previews removed from buffer"))
+      (progn
+        (my/org-render-latex-buffer-previews)
+        (my/org-latex-preview-appearance-sync)
+        (message "LaTeX previews created for buffer"))))
+
+  (defun my/org-clear-latex-previews-after-theme-change (&rest _)
+    "Clear Org LaTeX previews after theme changes to avoid stale colors." 
+    (dolist (buf (buffer-list))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (when (derived-mode-p 'org-mode)
+            (my/org-clear-latex-buffer-previews))))))
+
+  (advice-add 'load-theme :after #'my/org-clear-latex-previews-after-theme-change)
+
+  ;; Non-leader bindings are applied in evil normal state below.
+  )
+
+;; Doom binds `zi` in `evil-org-mode-map`; override that too.
 
 ;; Keep RET ergonomic for image links with descriptions:
 ;; if point is on file:/attachment: image link, toggle that one preview;
@@ -3273,10 +3454,14 @@ Without ARG, this toggles previews across the whole accessible buffer."
   (defun my/org-keys-override-h ()
     "Override org/evil-org local keys with preview-friendly variants."
     (local-set-key (kbd "RET") #'my/org-dwim-at-point-or-toggle-link-preview)
-    (local-set-key (kbd "zi") #'my/org-toggle-inline-previews)
+    ;; Ensure `z` behaves as text in insert state (no local prefix map bleed).
+    (local-unset-key (kbd "z"))
     (when (bound-and-true-p evil-local-mode)
+      (evil-local-set-key 'insert (kbd "z") #'self-insert-command)
       (evil-local-set-key 'normal (kbd "zi") #'my/org-toggle-inline-previews)
       (evil-local-set-key 'normal (kbd "z i") #'my/org-toggle-inline-previews)
+      (evil-local-set-key 'normal (kbd "z l") #'my/org-toggle-latex-buffer-previews)
+      (evil-local-set-key 'normal (kbd "z L") #'my/org-toggle-latex-auto-preview-mode)
       (evil-local-set-key 'motion (kbd "RET") #'my/org-dwim-at-point-or-toggle-link-preview)))
   (add-hook 'org-mode-hook #'my/org-keys-override-h))
 #+end_src
