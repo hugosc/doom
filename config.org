@@ -3718,12 +3718,75 @@ Disable Evil's ESC keybinding in vterm buffers.
 Configure Circe for automatic authentication with Libera Chat using SASL.
 
 #+begin_src emacs-lisp
+;; Circe: keep secrets out of this repo.
+;; Store credentials in ~/.authinfo.gpg and fetch them via auth-source.
+;;
+;; Example (~/.authinfo.gpg):
+;; machine irc.libera.chat login Crocod1le password "..." port 6697
+;; machine irc.scpwiki.com  login Crocod1le password "..." port 6697
+;;
+;; Create/edit the file with:
+;;   emacs ~/.authinfo.gpg
+;; (it will prompt for your GPG key/passphrase if needed)
+;;
+(after! circe
+  (require 'auth-source)
+  (require 'cl-lib)
+
+  (defun my/auth-source--match (&rest params)
+    "Return first auth-source match for PARAMS, or nil."
+    (car (apply #'auth-source-search (append params '(:max 1 :require (:secret))))))
+
+  (defun my/auth-source-get-secret (&rest params)
+    "Return secret from auth-source matching PARAMS.
+This returns the resolved string (calling :secret if it's a function)."
+    (let ((match (apply #'my/auth-source--match params)))
+      (when match
+        (let ((secret (plist-get match :secret)))
+          (if (functionp secret) (funcall secret) secret)))))
+
+  (defun my/auth-source-get-secret-or-error (&rest params)
+    "Like `my/auth-source-get-secret' but error if missing."
+    (or (apply #'my/auth-source-get-secret params)
+        (error "auth-source: no match for %S" params)))
+
+  (defun my/circe-authinfo-password (host user port)
+    "Fetch password for HOST/USER/PORT with a couple fallbacks.
+This is tolerant of authinfo entries missing a port or using a different
+case for the login."
+    (let ((port (and port (format "%s" port)))
+          (users (delete-dups (list user (downcase user)))))
+      (or
+       (cl-loop for u in users
+                thereis (my/auth-source-get-secret :host host :user u :port port))
+       (cl-loop for u in users
+                thereis (my/auth-source-get-secret :host host :user u))
+       (my/auth-source-get-secret-or-error :host host))))
+
+  (defun my/circe-sasl-password (_server)
+    (my/circe-authinfo-password "irc.libera.chat" "Crocod1le" 6697))
+
+  (defun my/circe-scp-sasl-password (_server)
+    ;; SkipIRC / SCPWiki network
+    (my/circe-authinfo-password "irc.scpwiki.com" "Crocod1le" 6697)))
+
 (setq circe-network-options
       '(("Libera Chat"
+         :host "irc.libera.chat"
+         :port 6697
          :tls t
          :nick "Crocod1le"
          :sasl-username "Crocod1le"
-         :sasl-password "Eight0011!!")))
+         :sasl-password my/circe-sasl-password)
+        ("SCPWiki"
+         :host "irc.scpwiki.com"
+         :port 6697
+         :tls t
+         :nick "Crocod1le"
+         :sasl-username "Crocod1le"
+         :sasl-password my/circe-scp-sasl-password
+         ;; Add more options as needed, e.g. :channels, etc.
+         )))
 #+end_src
 
 To connect to Libera Chat with automatic authentication, simply run:
