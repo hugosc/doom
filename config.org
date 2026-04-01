@@ -1634,9 +1634,15 @@ Returns nil when point is not on an id: link, allowing fallthrough."
 ** Buffer Navigation
 
 Keybindings for cycling through buffers with Alt+Shift+H/L.
-Cycles through the current workspace's buffer list (the same set shown by =SPC ,=)
-so that buffers added via =C-c p a= are included. Falls back to all buffers if
-the workspaces module is not active.
+Cycles through buffers *owned by the current workspace*.
+
+Note: =SPC ,= uses =persp-switch-to-buffer= (workspace buffer switching).
+=C-c p a= / =C-c p k= (or sometimes =C-c w a= / =C-c w k= depending on bindings)
+add/remove buffers from the current workspace.
+
+To prevent buffer cycling from \"leaking\" across workspaces, the cycle list
+prefers buffers that are in the current workspace *and not in any other*.
+Falls back to all buffers if the workspaces module is not active.
 We need to unbind evil-org-mode's bindings which override the global ones.
 
 #+begin_src emacs-lisp
@@ -1645,11 +1651,72 @@ We need to unbind evil-org-mode's bindings which override the global ones.
   (map! :map evil-org-mode-map
         :nvi "M-H" nil
         :nvi "M-L" nil))
+
+;; Doom's workspaces module auto-adds the current buffer to the active
+;; workspace on every buffer switch. That makes it very easy for buffers to
+;; "leak" into other workspaces (e.g. visiting an org file in main, then
+;; switching to *IRC* can add that org buffer to *IRC*).
+;;
+;; We override that behavior for the *IRC* workspace: only Circe buffers are
+;; allowed to live there.
+(after! persp-mode
+  (defun +my/workspaces--circe-buffer-p (buf)
+    (with-current-buffer buf
+      (derived-mode-p 'circe-server-mode 'circe-channel-mode 'circe-query-mode)))
+
+  (defun +my/workspaces-add-current-buffer-h ()
+    "Add current buffer to the current workspace, but keep *IRC* Circe-only."
+    (when (bound-and-true-p persp-mode)
+      (let* ((buf (or (buffer-base-buffer (current-buffer)) (current-buffer)))
+             (persp (get-current-persp))
+             (pname (safe-persp-name persp))
+             (is-circe (+my/workspaces--circe-buffer-p buf)))
+        (unless (persp-buffer-filtered-out-p
+                 buf
+                 persp-add-buffer-on-after-change-major-mode-filter-functions)
+          (cond
+           ((string= pname "*IRC*")
+            (if is-circe
+                (persp-add-buffer buf persp nil nil)
+              (when (persp-contain-buffer-p buf persp)
+                (persp-remove-buffer buf persp nil nil))))
+           (t
+            ;; Keep circe buffers out of non-IRC workspaces.
+            (when is-circe
+              (let ((irc (persp-get-by-name "*IRC*")))
+                (when irc (persp-add-buffer buf irc nil nil)))
+              (when (persp-contain-buffer-p buf persp)
+                (persp-remove-buffer buf persp nil nil)))
+            (unless is-circe
+              (persp-add-buffer buf persp nil nil))))))))
+
+  (advice-add #'+workspaces-add-current-buffer-h :override #'+my/workspaces-add-current-buffer-h))
+
 (defun +my/workspace-buffer-list ()
-  "Return the current workspace's buffer list, falling back to all buffers."
-  (if (fboundp '+workspace-buffer-list)
-      (+workspace-buffer-list)
-    (buffer-list)))
+  "Return buffers to cycle within the current workspace.
+
+Prefer buffers that belong *only* to the current persp (to avoid buffer cycling
+\"leaking\" across workspaces when a buffer is present in multiple persps)."
+  (cond
+   ;; When `persp-mode' is active, use its restricted buffer list with OPTION=2:
+   ;; include buffers in the current persp, excluding ones also present in
+   ;; other persps.
+   ((and (bound-and-true-p persp-mode)
+         (fboundp 'persp-buffer-list-restricted))
+    (let* ((frame (selected-frame))
+           (unique (cl-remove-if-not #'buffer-live-p
+                                     (persp-buffer-list-restricted frame 2))))
+      ;; If everything is shared across workspaces, "unique" will be empty.
+      ;; Fall back to the current workspace's full buffer list so cycling still
+      ;; works, even if it will include shared buffers.
+      (if unique
+          unique
+        (cl-remove-if-not #'buffer-live-p
+                          (persp-buffer-list-restricted frame 0)))))
+   ((fboundp '+workspace-buffer-list)
+    (+workspace-buffer-list))
+   (t
+    (buffer-list))))
 (defun +my/workspace-next-buffer ()
   "Switch to the next buffer in the current workspace (wraps around)."
   (interactive)
