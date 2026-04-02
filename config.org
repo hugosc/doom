@@ -236,15 +236,42 @@ Configure Emacs Privacy Guard (EPG) for proper GPG integration with plstore and 
 
 ** Window Navigation: C-hjkl like C-w hjkl (nvim)
 
-Move between windows with =C-h/j/k/l= in normal/visual/motion states, mirroring Neovim's =C-w hjkl=.
+Move between windows with =C-h/j/k/l= everywhere (all Evil states), mirroring Neovim's =C-w hjkl=.
+
+This is implemented as an emulation keymap (via `emulation-mode-map-alists`)
+so it takes precedence over mode maps and evil-org bindings.
+
+It is disabled in the minibuffer so `M-x` keeps `C-j`/`C-k` for navigating the
+completion list.
 
 #+begin_src emacs-lisp
 (after! evil
-  (map! :nvm "C-h" #'evil-window-left
-        :nvm "C-j" #'evil-window-down
-        :nvm "C-k" #'evil-window-up
-        :nvm "C-l" #'evil-window-right
-        :nm  "L"   #'evil-end-of-line))
+  (defvar my/nav-keys-emulation-map (make-sparse-keymap)
+    "Emulation keymap for global window navigation.")
+
+  (define-key my/nav-keys-emulation-map (kbd "C-h") #'evil-window-left)
+  (define-key my/nav-keys-emulation-map (kbd "C-j") #'evil-window-down)
+  (define-key my/nav-keys-emulation-map (kbd "C-k") #'evil-window-up)
+  (define-key my/nav-keys-emulation-map (kbd "C-l") #'evil-window-right)
+
+  (defvar my/nav-keys-emulation-alist `((my/nav-keys-mode . ,my/nav-keys-emulation-map))
+    "Alist entry for `emulation-mode-map-alists'.")
+
+  (define-minor-mode my/nav-keys-mode
+    "Enable global window navigation keys in this buffer."
+    :init-value nil)
+
+  (define-globalized-minor-mode my/global-nav-keys-mode my/nav-keys-mode
+    (lambda ()
+      (unless (minibufferp)
+        (my/nav-keys-mode 1))))
+
+  ;; Ensure our navigation keys beat evil-org and mode maps.
+  (add-to-list 'emulation-mode-map-alists 'my/nav-keys-emulation-alist)
+  (my/global-nav-keys-mode 1)
+
+  ;; Keep your existing convenience binding.
+  (map! :nm "L" #'evil-end-of-line))
 #+end_src
 
 ** Window Zoom Toggle: SPC w z
@@ -1586,49 +1613,87 @@ First K: show a floating preview of the linked heading's section.
           For file-level nodes, shows the first lines of content.
 Second K: follow the link (like RET).
 Returns nil when point is not on an id: link, allowing fallthrough."
-  (when-let ((link (+org-roam-link-at-point)))
-    (if +org-roam--box-was-open
-        (progn
-          (setq +org-roam--box-was-open nil)
-          (eldoc-box-quit-frame)
-          (org-open-at-point))
-      (let* ((id   (org-element-property :path link))
-             (node (org-roam-node-from-id id))
-             (loc  (org-id-find id)))
-        (if (not loc)
-            (user-error "org-roam: can't find node %s" id)
-          (let* ((file  (car loc))
-                 (pt    (cdr loc))
-                 (title (if node (org-roam-node-title node) id))
-                 (level (if node (org-roam-node-level node) 1))
-                 ;; File-level nodes (level 0): use first-lines preview.
-                 ;; Heading nodes (level > 0): use the section content.
-                 ;; Both are stripped to plain text.
-                 (body  (if (= level 0)
-                            (+org-roam-file-preview file)
-                          (+org-roam--plain-text
-                           (or (org-roam-preview-get-contents file pt) ""))))
-                 (str   (concat (propertize title 'face 'bold) "\n\n"
-                                (if (or (null body) (string-empty-p body))
-                                    "(no preview available)"
-                                  body))))
-            (setq +org-roam--box-was-open t)
-            (advice-add 'eldoc-box-quit-frame :after
-                        (lambda (&rest _) (setq +org-roam--box-was-open nil))
-                        '((name . +org-roam--reset-box-flag)))
-            (let ((eldoc-box-position-function
-                   eldoc-box-at-point-position-function))
-              (eldoc-box--display str))
-            ;; Mirror what eldoc-box-help-at-point does: record point and
-            ;; start the cleanup timer so the frame dismisses on movement.
-            (setq eldoc-box--help-at-point-last-point (point))
-            (run-with-timer 0.1 nil #'eldoc-box--help-at-point-cleanup)
-            (when eldoc-box-clear-with-C-g
-              (advice-add #'keyboard-quit :before #'eldoc-box-quit-frame))))))
-    t))
+  ;; Be tolerant of load order: if org-roam/preview aren't loaded yet, load them
+  ;; on demand. If they can't be loaded, fall through to other documentation
+  ;; handlers.
+  (when (and (require 'org-roam nil t)
+             ;; `org-roam-preview-get-contents' is provided by org-roam-mode.
+             ;; If it isn't loaded, heading previews will error (void-function)
+             ;; and Doom's lookup machinery will treat this handler as failed.
+             (require 'org-roam-mode nil t)
+             ;; `org-roam-preview-get-contents' lives in org-roam itself (not a
+             ;; separate `org-roam-preview' feature in current org-roam).
+             (require 'eldoc-box nil t)
+             (require 'org-id nil t))
+    (when-let ((link (+org-roam-link-at-point)))
+      (if +org-roam--box-was-open
+          (progn
+            (setq +org-roam--box-was-open nil)
+            (eldoc-box-quit-frame)
+            (org-open-at-point))
+        (let* ((id   (org-element-property :path link))
+               (node (ignore-errors (org-roam-node-from-id id)))
+               ;; Prefer org-roam's DB for location; it is more reliable than
+               ;; `org-id-find', which depends on `org-id-locations' being loaded
+               ;; (and can feel "inconsistent" after restarts).
+               (loc  (or (and node
+                              (org-roam-node-file node)
+                              (cons (org-roam-node-file node)
+                                    (org-roam-node-point node)))
+                         (ignore-errors (org-id-find id)))))
+          (if (not loc)
+              (user-error "org-roam: can't find node %s" id)
+            (let* ((file  (car loc))
+                   (pt    (cdr loc))
+                   (title (if node (org-roam-node-title node) id))
+                   (level (if node (org-roam-node-level node) 1))
+                   ;; File-level nodes (level 0): use first-lines preview.
+                   ;; Heading nodes (level > 0): use the section content.
+                   ;; Both are stripped to plain text.
+                   (body  (if (= level 0)
+                              (+org-roam-file-preview file)
+                            (+org-roam--plain-text
+                             (or (org-roam-preview-get-contents file pt) ""))))
+                   (str   (concat (propertize title 'face 'bold) "\n\n"
+                                  (if (or (null body) (string-empty-p body))
+                                      "(no preview available)"
+                                    body))))
+              (setq +org-roam--box-was-open t)
+              (advice-add 'eldoc-box-quit-frame :after
+                          (lambda (&rest _) (setq +org-roam--box-was-open nil))
+                          '((name . +org-roam--reset-box-flag)))
+              (let ((eldoc-box-position-function
+                     eldoc-box-at-point-position-function))
+                (eldoc-box--display str))
+              ;; Mirror what eldoc-box-help-at-point does: record point and
+              ;; start the cleanup timer so the frame dismisses on movement.
+              (setq eldoc-box--help-at-point-last-point (point))
+              (run-with-timer 0.1 nil #'eldoc-box--help-at-point-cleanup)
+              (when eldoc-box-clear-with-C-g
+                (advice-add #'keyboard-quit :before #'eldoc-box-quit-frame))))))
+      ;; Non-nil means we handled the lookup; nil allows fallthrough.
+      t)))
+
 (after! (org-roam eldoc-box)
-  (set-lookup-handlers! 'org-mode
-    :documentation #'+org-roam-K-at-point))
+  ;; IMPORTANT: Don't use `set-lookup-handlers!' here.
+  ;; Doom's org module already calls it for org-mode (definition/references/docs).
+  ;; Calling it again would overwrite those handlers and can be order-dependent.
+  ;;
+  ;; Instead, prepend our roam-preview handler buffer-locally so `K`
+  ;; consistently previews roam links, then falls through to the normal org
+  ;; documentation handlers when not on a roam link.
+  (defun +my/org-roam-lookup-doc-setup-h ()
+    (when (boundp '+lookup-documentation-functions)
+      ;; Run early.
+      (add-hook '+lookup-documentation-functions #'+org-roam-K-at-point -90 t)))
+
+  (add-hook 'org-mode-hook #'+my/org-roam-lookup-doc-setup-h)
+  ;; Seed already-open org buffers (e.g. restored sessions) so it's not
+  ;; "inconsistent until reload".
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (derived-mode-p 'org-mode)
+        (+my/org-roam-lookup-doc-setup-h)))))
 #+end_src
 
 ** Buffer Navigation
@@ -3770,14 +3835,33 @@ Disable Evil's ESC keybinding in vterm buffers.
 
 #+begin_src emacs-lisp
 (after! vterm
+  ;; By default, vterm captures most keys and sends them directly to the
+  ;; terminal. For cohesive navigation, we want C-h/j/k/l to always move between
+  ;; Emacs splits, even while vterm is in Evil insert state.
+  ;;
+  ;; `vterm-keymap-exceptions' makes vterm let Emacs handle those keys.
+  (setq vterm-keymap-exceptions
+        (delete-dups (append vterm-keymap-exceptions
+                             '("C-j" "C-k"))))
+
   (add-hook 'vterm-mode-hook
     (lambda ()
       ;; ESC sends to terminal, not evil
       (evil-define-key 'insert vterm-mode-map
         (kbd "<escape>") 'vterm-send-escape)
-      ;; Ctrl-c Ctrl-c enters normal mode
+      ;; Exit to Evil normal state without stealing plain ESC from TUI apps.
       (evil-define-key 'insert vterm-mode-map
-        (kbd "C-c C-c") 'evil-normal-state))))
+        (kbd "M-<escape>") #'evil-normal-state)
+      ;; And keep C-c C-c as a real SIGINT for the terminal.
+      (evil-define-key 'insert vterm-mode-map
+        (kbd "C-c C-c") #'vterm-send-C-c)
+
+      ;; Always keep split navigation consistent.
+      (evil-define-key 'insert vterm-mode-map
+        (kbd "C-h") #'evil-window-left
+        (kbd "C-j") #'evil-window-down
+        (kbd "C-k") #'evil-window-up
+        (kbd "C-l") #'evil-window-right))))
 #+end_src
 
 * Circe IRC Configuration
