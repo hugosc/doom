@@ -272,6 +272,218 @@ completion list.
 
   ;; Keep your existing convenience binding.
   (map! :nm "L" #'evil-end-of-line))
+
+;; Flash-like jump on `s`: type to narrow, then type a label to jump.
+;; Unlike `avy-goto-char-timer`, this doesn't wait for a timeout.
+;; Keep `evil-snipe` configured and available on `S`.
+(after! evil-snipe
+  (setq evil-snipe-scope 'whole-visible
+        evil-snipe-repeat-scope 'whole-visible
+        evil-snipe-spillover-scope 'whole-visible
+        evil-snipe-enable-highlight t
+        evil-snipe-enable-incremental-highlight t)
+  (evil-define-key* '(normal motion) evil-snipe-local-mode-map
+    "S" #'evil-snipe-S))
+
+(after! avy
+  (require 'cl-lib)
+  ;; Ensure avy internals used below are available.
+  (require 'avy)
+  (defvar my/flash--match-overlays nil)
+
+  (defun my/flash--cleanup ()
+    (when (boundp 'avy--overlays-back)
+      (mapc #'delete-overlay avy--overlays-back)
+      (setq avy--overlays-back nil))
+    (when (fboundp 'avy--remove-leading-chars)
+      (avy--remove-leading-chars))
+    (mapc #'delete-overlay my/flash--match-overlays)
+    (setq my/flash--match-overlays nil))
+
+  (defun my/flash--smartcase-fold-p (s)
+    "Return non-nil when searches should ignore case for S."
+    (not (string-match-p "[A-Z]" s)))
+
+  (defun my/flash--candidates (query &optional wnd)
+    "Return visible QUERY matches as avy-style leafs.
+Each element is ((BEG . END) . WND)."
+    (let* ((wnd (or wnd (selected-window)))
+           (case-fold-search (my/flash--smartcase-fold-p query))
+           (cands nil))
+      (when (> (length query) 0)
+        (with-selected-window wnd
+          (save-excursion
+            (let* ((beg (window-start wnd))
+                   (end (window-end wnd t))
+                   ;; `avy--find-visible-regions` skips invisible text.
+                   (regions (if (fboundp 'avy--find-visible-regions)
+                                (avy--find-visible-regions beg end)
+                              (list (cons beg end)))))
+              (dolist (pair regions)
+                (goto-char (car pair))
+                (while (search-forward query (cdr pair) t)
+                  (let ((mb (match-beginning 0))
+                        (me (match-end 0)))
+                    (push (cons (cons mb me) wnd) cands))))))))
+      (nreverse cands)))
+
+  (defun my/flash--continuation-chars (cands)
+    "Return a list of chars that occur immediately after each match in CANDS."
+    (let (chars)
+      (dolist (leaf cands)
+        (let* ((wnd (cdr leaf))
+               (end (cdar leaf)))
+          (with-selected-window wnd
+            (let ((ch (char-after end)))
+              (when (characterp ch)
+                (push (downcase ch) chars)
+                (push (upcase ch) chars))))))
+      (delete-dups chars)))
+
+  (defun my/flash--safe-label-keys (base-keys cands)
+    "Filter BASE-KEYS so they can't extend the current match set."
+    (let* ((cont (my/flash--continuation-chars cands))
+           (keys (cl-remove-if (lambda (k) (memq k cont)) base-keys)))
+      ;; Need at least 2 keys to build a reasonable decision tree.
+      (if (>= (length keys) 2) keys nil)))
+
+  (defun my/flash--render (query cands label-keys)
+    (my/flash--cleanup)
+    ;; Highlight matches.
+    (let ((face (cond ((facep 'avy-goto-char-timer-face) 'avy-goto-char-timer-face)
+                      ((facep 'isearch) 'isearch)
+                      (t 'highlight))))
+      (dolist (leaf cands)
+        (let* ((wnd (cdr leaf))
+               (beg (caar leaf))
+               (end (cdar leaf))
+               (ol (make-overlay beg end (window-buffer wnd))))
+          (overlay-put ol 'window wnd)
+          (overlay-put ol 'face face)
+          (push ol my/flash--match-overlays))))
+    ;; Render labels (only if we have safe label keys).
+    (when (and label-keys (fboundp 'avy-tree) (fboundp 'avy-traverse) (fboundp 'avy--overlay-at-full))
+      (let ((tree (avy-tree cands label-keys)))
+        (avy-traverse
+         tree
+         (lambda (path leaf)
+           (avy--overlay-at-full path leaf)))))
+    (when (and (stringp query) (> (length query) 0))
+      (message "flash: %s" query)))
+
+  (defun my/flash--labels (cands label-keys)
+    "Return an alist (LABEL-STRING . LEAF) for CANDS."
+    (let (labels)
+      (when (and label-keys (fboundp 'avy-tree) (fboundp 'avy-traverse))
+        (let ((tree (avy-tree cands label-keys)))
+          (avy-traverse
+           tree
+           (lambda (path leaf)
+             (push (cons (apply #'string (mapcar #'avy--key-to-char (reverse path)))
+                         leaf)
+                   labels)))))
+      (nreverse labels)))
+
+  (defun my/flash--read-key ()
+    (funcall (or (and (boundp 'avy-translate-char-function) avy-translate-char-function)
+                 #'identity)
+             (read-key)))
+
+  (defun my/flash-jump ()
+    "Flash-like visible jump.
+
+Type a search pattern to narrow matches.
+When labels are shown, type a label to jump.
+
+Keys:
+  - Backspace/DEL: delete last pattern character
+  - RET: force label selection (even if label keys are not \"safe\")
+  - ESC/C-g: abort"
+    (interactive)
+    (let* ((base-keys (string-to-list "asdfghjklqwertyuiopzxcvbnm"))
+           (query "")
+           (label-mode nil)
+           (label-prefix "")
+           (cands nil)
+           (labels nil))
+      (unwind-protect
+          (catch 'done
+            ;; Read first non-control char to start the pattern.
+            (while (= (length query) 0)
+              (let ((k (my/flash--read-key)))
+                (cond ((memq k '(?\e ?\C-g)) (throw 'done nil))
+                      ((characterp k) (setq query (string k))))))
+            (while t
+              (setq cands (my/flash--candidates query))
+              (when (null cands)
+                (message "flash: no matches")
+                (throw 'done nil))
+              (when (= (length cands) 1)
+                (avy-action-goto (caar (car cands)))
+                (throw 'done t))
+
+              (let ((safe-label-keys (my/flash--safe-label-keys base-keys cands)))
+                (setq labels (my/flash--labels cands (or safe-label-keys base-keys)))
+                (my/flash--render query cands (and (not label-mode) safe-label-keys))
+
+                (let ((k (my/flash--read-key)))
+                  (cond
+                   ((memq k '(?\e ?\C-g))
+                    (throw 'done nil))
+
+                   ;; force label mode
+                   ((eq k ?\r)
+                    (setq label-mode t
+                          label-prefix "")
+                    (my/flash--render query cands base-keys))
+
+                   ;; delete last char (pattern or label prefix)
+                   ((memq k '(?\b ?\d))
+                    (if label-mode
+                        (setq label-prefix (if (> (length label-prefix) 0)
+                                               (substring label-prefix 0 -1)
+                                             ""))
+                      (setq query (if (> (length query) 0)
+                                      (substring query 0 -1)
+                                    ""))))
+
+                   ((characterp k)
+                    (if label-mode
+                        (progn
+                          (setq label-prefix (concat label-prefix (string k)))
+                          (let ((matches (cl-remove-if-not
+                                          (lambda (x) (string-prefix-p label-prefix (car x)))
+                                          labels)))
+                            (cond
+                             ((null matches) (ding))
+                             ((= (length matches) 1)
+                              (let ((leaf (cdar matches)))
+                                (avy-action-goto (caar leaf))
+                                (throw 'done t))))))
+                      (let ((next (concat query (string k))))
+                        (if (my/flash--candidates next)
+                            (setq query next)
+                          ;; If this key can't extend the query, and it's one of
+                          ;; the rendered label keys, treat it as label selection.
+                          (if (and safe-label-keys (memq k safe-label-keys))
+                              (progn
+                                (setq label-mode t
+                                      label-prefix (string k))
+                                (my/flash--render query cands safe-label-keys)
+                                (let ((matches (cl-remove-if-not
+                                                (lambda (x) (string-prefix-p label-prefix (car x)))
+                                                (my/flash--labels cands safe-label-keys))))
+                                  (when (= (length matches) 1)
+                                    (let ((leaf (cdar matches)))
+                                      (avy-action-goto (caar leaf))
+                                      (throw 'done t)))))
+                            (ding)))))))))))
+        (my/flash--cleanup)))))
+
+(after! (evil avy)
+  ;; Bind on top of evil-snipe/evil defaults.
+  (evil-define-key* '(normal motion visual operator) 'global
+    "s" #'my/flash-jump))
 #+end_src
 
 ** Window Zoom Toggle: SPC w z
