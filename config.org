@@ -2272,9 +2272,14 @@ Improve dired usability with better clipboard commands.
                             (shell-quote-argument file))))
           (call-process-shell-command cmd nil 0)
           (message "Copied file to clipboard: %s" (file-name-nondirectory file))))))
-  
+
   (map! :map dired-mode-map
-        :n "y Y" #'my/dired-copy-file-to-clipboard))
+        :n "y Y" #'my/dired-copy-file-to-clipboard
+
+        :n "a" #'dired-create-empty-file
+        )
+  (map! :leader
+         :desc "Dirvish" "d d" #'dirvish))
 #+end_src
 
 * Rust Configuration
