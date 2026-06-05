@@ -271,6 +271,11 @@ completion list.
   (my/global-nav-keys-mode 1)
 
   ;; Keep your existing convenience binding.
+  (defun my/evil-h-same-as-zero ()
+    "Move like `0` in the current context."
+    (interactive)
+    (call-interactively (key-binding (kbd "0"))))
+  (map! :nm "H" #'my/evil-h-same-as-zero)
   (map! :nm "L" #'evil-end-of-line))
 
 ;; Flash-like jump on `s`: type to narrow, then type a label to jump.
