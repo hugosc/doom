@@ -859,12 +859,11 @@ Properly handles org-roam-ui websocket server to prevent port conflicts."
                                   (file-exists-p wallpaper)))
          ;; Save org-roam-ui state before theme change
          (org-roam-ui-was-active (and (featurep 'org-roam-ui)
-                                       (bound-and-true-p org-roam-ui-mode))))
+                                      (bound-and-true-p org-roam-ui-mode))))
     
-    ;; Step 1: Stop org-roam-ui if running to prevent websocket port conflict
-    (when org-roam-ui-was-active
-      (org-roam-ui-mode -1)
-      (message "Stopped org-roam-ui for theme reload..."))
+    ;; Step 1: Do NOT restart org-roam-ui here.
+    ;; Restarting can race and conflict on the websocket port. We instead
+    ;; re-sync the UI theme over the existing websocket.
     
     ;; Step 2: Disable all old themes first to avoid conflicts
     (mapc #'disable-theme custom-enabled-themes)
@@ -914,13 +913,13 @@ Properly handles org-roam-ui websocket server to prevent port conflicts."
           (load-theme 'ewal-doom-one t)
           (message "Pywal theme reloaded (preset fallback to ewal)")))))
     
-    ;; Step 4: Restart org-roam-ui if it was running before
+    ;; Step 4: If ORUI was active, keep it running and just re-sync.
     (when org-roam-ui-was-active
-      ;; Small delay to ensure theme is fully loaded
-      (run-at-time 0.3 nil 
-                   (lambda ()
-                     (org-roam-ui-mode 1)
-                     (message "Restarted org-roam-ui after theme reload"))))))
+      (run-at-time
+       0.1 nil
+       (lambda ()
+         (when (fboundp 'my/org-roam-ui-sync-theme-now)
+           (my/org-roam-ui-sync-theme-now)))))))
 #+end_src
 
 ** Transparency Toggle and Pywal Auto-Reload
@@ -1030,10 +1029,143 @@ theme reloads, and to ensure better contrast in the web UI.
   :after org-roam
   :hook (org-roam-mode . org-roam-ui-mode)
   :config
-  (setq org-roam-ui-sync-theme nil  ; Disabled to prevent port conflicts & ensure good contrast
+  ;; We drive theme sync ourselves to:
+  ;; 1) always send a complete palette (bg/fg/base0..base8/etc)
+  ;; 2) avoid restarting org-roam-ui during pywal reloads (port conflicts)
+  (setq org-roam-ui-sync-theme nil
         org-roam-ui-follow t
         org-roam-ui-update-on-save t
         org-roam-ui-open-on-start nil))
+
+;; --- Org-roam-ui theme sync (pywal + Doom themes) ----------------------------
+(defvar my/org-roam-ui--pending-theme-sync nil
+  "Non-nil means send theme once websocket is open.")
+
+(defun my/org-roam-ui--color-hex-p (s)
+  (and (stringp s)
+       (string-match-p "^#[0-9a-fA-F]\\{6\\}$" s)))
+
+(defun my/org-roam-ui--safe-face-foreground (face &optional fallback)
+  (let ((c (ignore-errors (face-foreground face nil t))))
+    (if (my/org-roam-ui--color-hex-p c) c fallback)))
+
+(defun my/org-roam-ui--safe-face-background (face &optional fallback)
+  (let ((c (ignore-errors (face-background face nil t))))
+    (if (my/org-roam-ui--color-hex-p c) c fallback)))
+
+(defun my/org-roam-ui--safe-doom-color (sym &optional fallback)
+  (let ((c (when (fboundp 'doom-color)
+             (ignore-errors (doom-color sym)))))
+    (if (my/org-roam-ui--color-hex-p c) c fallback)))
+
+(defun my/org-roam-ui--blend (c1 c2 alpha)
+  "Blend C1 over C2 by ALPHA (0..1), returning #RRGGBB.
+Prefers doom-themes' `doom-blend' when available." 
+  (cond
+   ((and (fboundp 'doom-blend) (my/org-roam-ui--color-hex-p c1) (my/org-roam-ui--color-hex-p c2))
+    (doom-blend c1 c2 alpha))
+   ;; Fallback: coarse blend via built-in color.el
+   ((and (require 'cl-lib nil t)
+         (require 'color nil t)
+         (my/org-roam-ui--color-hex-p c1)
+         (my/org-roam-ui--color-hex-p c2))
+    (let* ((rgb1 (color-name-to-rgb c1))
+           (rgb2 (color-name-to-rgb c2))
+           (mix (cl-mapcar (lambda (a b) (+ (* alpha a) (* (- 1 alpha) b))) rgb1 rgb2)))
+      (apply #'color-rgb-to-hex mix)))
+   (t c1)))
+
+(defun my/org-roam-ui--current-theme-palette ()
+  "Return a theme alist for org-roam-ui with stable keys.
+
+org-roam-ui expects at least: bg, bg-alt, fg, fg-alt, base0..base8,
+and the accent colors used by the UI." 
+  (let* ((bg (or (my/org-roam-ui--safe-doom-color 'bg)
+                 (my/org-roam-ui--safe-face-background 'default "#000000")))
+         (fg (or (my/org-roam-ui--safe-doom-color 'fg)
+                 (my/org-roam-ui--safe-face-foreground 'default "#ffffff")))
+         ;; Prefer Doom's bases when present; otherwise synthesize a usable ramp.
+         (base0 (or (my/org-roam-ui--safe-doom-color 'base0) bg))
+         (base1 (or (my/org-roam-ui--safe-doom-color 'base1) (my/org-roam-ui--blend bg fg 0.06)))
+         (base2 (or (my/org-roam-ui--safe-doom-color 'base2) (my/org-roam-ui--blend bg fg 0.10)))
+         (base3 (or (my/org-roam-ui--safe-doom-color 'base3) (my/org-roam-ui--blend bg fg 0.16)))
+         (base4 (or (my/org-roam-ui--safe-doom-color 'base4) (my/org-roam-ui--blend bg fg 0.24)))
+         (base5 (or (my/org-roam-ui--safe-doom-color 'base5) (my/org-roam-ui--blend bg fg 0.36)))
+         (base6 (or (my/org-roam-ui--safe-doom-color 'base6) (my/org-roam-ui--blend bg fg 0.52)))
+         (base7 (or (my/org-roam-ui--safe-doom-color 'base7) (my/org-roam-ui--blend bg fg 0.70)))
+         (base8 (or (my/org-roam-ui--safe-doom-color 'base8) fg))
+         (bg-alt (or (my/org-roam-ui--safe-doom-color 'bg-alt)
+                     base1))
+         (fg-alt (or (my/org-roam-ui--safe-doom-color 'fg-alt)
+                     (my/org-roam-ui--safe-face-foreground 'font-lock-comment-face base6)))
+         (red (or (my/org-roam-ui--safe-doom-color 'red)
+                  (my/org-roam-ui--safe-face-foreground 'error "#ff5555")))
+         (orange (or (my/org-roam-ui--safe-doom-color 'orange)
+                     (my/org-roam-ui--safe-face-foreground 'warning "#ffb86c")))
+         (yellow (or (my/org-roam-ui--safe-doom-color 'yellow)
+                     (my/org-roam-ui--safe-face-foreground 'font-lock-builtin-face "#f1fa8c")))
+         (green (or (my/org-roam-ui--safe-doom-color 'green)
+                    (my/org-roam-ui--safe-face-foreground 'success "#50fa7b")))
+         (cyan (or (my/org-roam-ui--safe-doom-color 'cyan)
+                   (my/org-roam-ui--safe-face-foreground 'font-lock-constant-face "#8be9fd")))
+         (blue (or (my/org-roam-ui--safe-doom-color 'blue)
+                   (my/org-roam-ui--safe-face-foreground 'font-lock-keyword-face "#61bfff")))
+         (violet (or (my/org-roam-ui--safe-doom-color 'violet)
+                     (my/org-roam-ui--safe-doom-color 'purple)
+                     (my/org-roam-ui--safe-face-foreground 'font-lock-type-face "#bd93f9")))
+         (magenta (or (my/org-roam-ui--safe-doom-color 'magenta)
+                      (my/org-roam-ui--safe-face-foreground 'font-lock-preprocessor-face "#ff79c6"))))
+    (list (cons 'bg bg)
+          (cons 'bg-alt bg-alt)
+          (cons 'fg fg)
+          (cons 'fg-alt fg-alt)
+          (cons 'base0 base0)
+          (cons 'base1 base1)
+          (cons 'base2 base2)
+          (cons 'base3 base3)
+          (cons 'base4 base4)
+          (cons 'base5 base5)
+          (cons 'base6 base6)
+          (cons 'base7 base7)
+          (cons 'base8 base8)
+          (cons 'red red)
+          (cons 'orange orange)
+          (cons 'yellow yellow)
+          (cons 'green green)
+          (cons 'cyan cyan)
+          (cons 'blue blue)
+          (cons 'violet violet)
+          (cons 'magenta magenta))))
+
+(defun my/org-roam-ui--ws-open-p ()
+  (and (boundp 'org-roam-ui-ws-socket)
+       org-roam-ui-ws-socket
+       (fboundp 'websocket-openp)
+       (ignore-errors (websocket-openp org-roam-ui-ws-socket))))
+
+(defun my/org-roam-ui-sync-theme-now ()
+  "Send current palette to the ORUI websocket if available." 
+  (when (and (featurep 'org-roam-ui)
+             (bound-and-true-p org-roam-ui-mode))
+    (setq org-roam-ui-custom-theme (my/org-roam-ui--current-theme-palette))
+    (if (my/org-roam-ui--ws-open-p)
+        (progn
+          (setq my/org-roam-ui--pending-theme-sync nil)
+          (ignore-errors (org-roam-ui-sync-theme)))
+      (setq my/org-roam-ui--pending-theme-sync t))))
+
+(defun my/org-roam-ui--after-ws-open (&rest _)
+  ;; Ensure the UI gets a theme immediately after connecting.
+  (when (or my/org-roam-ui--pending-theme-sync t)
+    (setq my/org-roam-ui--pending-theme-sync nil)
+    (my/org-roam-ui-sync-theme-now)))
+
+(with-eval-after-load 'org-roam-ui
+  ;; When the websocket connects, push theme right away.
+  (advice-add 'org-roam-ui--ws-on-open :after #'my/org-roam-ui--after-ws-open))
+
+;; Re-sync ORUI whenever Doom loads a theme (including your pywal/ewal reload).
+(add-hook 'doom-load-theme-hook #'my/org-roam-ui-sync-theme-now)
 #+end_src
 
 ** Capture Templates
@@ -2080,8 +2212,8 @@ Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations
 ;; Use fd instead of find for projectile
 (after! projectile
   (when (executable-find "fd")
-    (setq projectile-git-command "fd . -0 --type f --color=never"
-          projectile-generic-command "fd . -0 --type f --color=never"
+    (setq projectile-git-command "fd . -u -0 --type f --color=never"
+          projectile-generic-command "fd . -u -0 --type f --color=never"
           projectile-indexing-method 'alien
           projectile-enable-caching nil)))  ; No cache needed with fd
 ;; Use ripgrep for project search
@@ -2093,7 +2225,7 @@ Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations
   (when (executable-find "rg")
     (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number --search-zip"))
   (when (executable-find "fd")
-    (setq consult-fd-args "fd --color=never --full-path --hidden --exclude .git")))
+    (setq consult-fd-args "fd -u --color=never --full-path --hidden --exclude .git")))
 ;; Use ripgrep for Doom's default search
 (after! vertico
   (when (executable-find "rg")
