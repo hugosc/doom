@@ -56,6 +56,7 @@
 - [[#org-formatting][Org Formatting]]
 - [[#org-inline-images][Org Inline Images]]
   - [[#unified-image-display-for-org-download][Unified Image Display for Org-Download]]
+  - [[#latex-image-export][LaTeX Image Export]]
 - [[#zen-mode-customization][Zen Mode Customization]]
 - [[#dashboard-customization][Dashboard Customization]]
 - [[#pdf-configuration][PDF Configuration]]
@@ -3969,6 +3970,33 @@ This keeps preview overlays in sync for manual and pasted attachments."
 (after! org-download
   (setq org-download-link-format "[[file:%s]]\n"
         org-download-abbreviate-filename-function #'file-relative-name))
+#+end_src
+
+** LaTeX Image Export
+
+Make `[[file:...][desc]]` images export like plain file links when the target is
+an image, instead of exporting as a clickable text link.
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'ox-latex
+  (defun my/org-latex--image-link-p (link)
+    "Non-nil when LINK points to an inline image, even with a description." 
+    (let* ((type (org-element-property :type link))
+           (path (org-element-property :path link))
+           (clean-path (and path (car (split-string path "[#?]"))))
+           (maybe-image (cond
+                         ((member type '("file" "attachment" "download"))
+                          (and clean-path (image-type-from-file-name clean-path)))
+                         (t nil))))
+      maybe-image))
+
+  (defun my/org-latex-link-export-as-image (orig-fn link desc info)
+    "Render image links as images in LaTeX even when they have descriptions."
+    (if (and desc (my/org-latex--image-link-p link))
+        (org-latex--inline-image (org-export-link-localise link) info)
+      (funcall orig-fn link desc info)))
+
+  (advice-add 'org-latex-link :around #'my/org-latex-link-export-as-image))
 #+end_src
 
 * Zen Mode Customization
