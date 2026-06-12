@@ -35,9 +35,6 @@
   - [[#buffer-navigation][Buffer Navigation]]
 - [[#lecture-processing][Lecture Processing]]
 - [[#file-navigation][File Navigation]]
-  - [[#performance-fast-search-tools][Performance: Fast Search Tools]]
-  - [[#yazi-integration-eeeel][Yazi Integration (eee.el)]]
-  - [[#dired-configuration][Dired Configuration]]
 - [[#rust-configuration][Rust Configuration]]
 - [[#java-configuration][Java Configuration]]
 - [[#ai-integration-copilot][AI Integration: Copilot]]
@@ -1267,6 +1264,24 @@ The dailies configuration is now integrated into the main org-roam configuration
 
 ** Helper Functions
 
+*** Killring Markdown to Org
+
+#+begin_src emacs-lisp
+(defun my/yank-markdown-as-org ()
+  "Yank Markdown text as Org.
+
+This command will convert Markdown text in the top of the `kill-ring' to Org using the pandoc utility."
+  (interactive)
+  (save-excursion
+    (with-temp-buffer
+      (yank)
+      (shell-command-on-region
+       (point-min) (point-max)
+       "pandoc -f markdown -t org --wrap=preserve" t t)
+      (kill-region (point-min) (point-max)))
+    (yank)))
+#+end_src
+
 *** Promote Heading to Concept
 
 This function extracts a heading from a lecture or inbox note and promotes it
@@ -1851,7 +1866,8 @@ All org-roam related keybindings are under the =SPC n= prefix.
         :desc "Insert node link" "n l" #'org-roam-node-insert
         :desc "Toggle backlinks" "n b" #'org-roam-buffer-toggle
         :desc "Open graph UI" "n g" #'org-roam-ui-open
-        :desc "Capture new node" "n c" #'org-roam-capture)
+        :desc "Capture new node" "n c" #'org-roam-capture
+        :desc "Capture new node" "n c" #'my/yank-markdown-as-org)
 #+end_src
 
 ** Org-Roam Link Hover (K)
@@ -2185,102 +2201,84 @@ Helper function to mark a lecture as processed and move it from =raw/= to =proce
 
 * File Navigation
 
-Use =consult-fd= for live, telescope-like file finding without caching.
+Use =consult-fd= for fast file finding and =consult-dir= for directory navigation.
+Zoxide is appended last as a global fallback jump source.
 
 #+begin_src emacs-lisp
 ;; SPC e - Open/toggle Treemacs file explorer
-(map! :leader :desc "Open Treemacs" "e" #'+treemacs/toggle)
-;; SPC SPC - Find file in current project/directory (fast)
-(map! :leader :desc "Find file (project)" "SPC" #'consult-fd)
-;; SPC f f - Find file from home directory (fast, can type / for root)
+(map! :leader
+      :desc "Open Treemacs"
+      "dd" #'dirvish
+      "e" #'+treemacs/toggle)
+
+;; SPC SPC - Find file in current project/directory
+(map! :leader
+      :desc "Find file (project)"
+      "SPC" #'consult-fd)
+
+;; SPC f f - Find file from home directory
 (defun my/consult-fd-from-home ()
   "Find file using consult-fd starting from home directory."
   (interactive)
   (let ((default-directory "~")
         (projectile-require-project-root nil))
     (consult-fd)))
-;; SPC f d - Find directory with consult-dir (built-in, fast)
+
+;; SPC f d - consult-dir with zoxide appended last
+(after! consult-dir
+
+  (defun my/consult-dir-zoxide-dirs ()
+    "Return directories from zoxide."
+    (when (executable-find "zoxide")
+      (split-string
+       (shell-command-to-string "zoxide query --list")
+       "\n" t)))
+
+  (defvar my/consult-dir-source-zoxide
+    `(:name "Zoxide"
+      :narrow ?z
+      :category file
+      :face consult-file
+      :history file-name-history
+      :enabled ,(lambda () (executable-find "zoxide"))
+      :items my/consult-dir-zoxide-dirs))
+
+  ;; Force ordering: project first, then others, zoxide last
+  (setq consult-dir-sources
+        (append
+         (list consult-dir--source-project
+               consult-dir--source-recentf
+               consult-dir--source-bookmark)
+         (list my/consult-dir-source-zoxide))))
+
 (map! :leader
       :prefix "f"
       :desc "Find file from home" "f" #'my/consult-fd-from-home
       :desc "Find directory" "d" #'consult-dir)
-#+end_src
+(after! dirvish
 
-** Performance: Fast Search Tools
-
-Configure Emacs to use modern fast tools (fd, ripgrep) for all search operations.
-
-#+begin_src emacs-lisp
-;; Use fd instead of find for projectile
-(after! projectile
-  (when (executable-find "fd")
-    (setq projectile-git-command "fd . -u -0 --type f --color=never"
-          projectile-generic-command "fd . -u -0 --type f --color=never"
-          projectile-indexing-method 'alien
-          projectile-enable-caching nil)))  ; No cache needed with fd
-;; Use ripgrep for project search
-(after! counsel
-  (when (executable-find "rg")
-    (setq counsel-rg-base-command "rg --no-heading --line-number --color never %s .")))
-;; Configure consult to use ripgrep and fd
-(after! consult
-  (when (executable-find "rg")
-    (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number --search-zip"))
-  (when (executable-find "fd")
-    (setq consult-fd-args "fd -u --color=never --full-path --hidden --exclude .git")))
-;; Use ripgrep for Doom's default search
-(after! vertico
-  (when (executable-find "rg")
-    (setq +default-want-RET-continue-p nil)))
-#+end_src
-
-** Yazi Integration (eee.el)
-
-Launch yazi file manager in external terminal with Emacs integration.
-
-#+begin_src emacs-lisp
-(use-package! eee
-  :config
-  ;; Use suckless terminal for yazi and other TUI tools
-  (setq ee-terminal-command "st")
-  
-  ;; Keybindings for yazi and other TUI tools
-  (map! :leader
-        :desc "Yazi (current dir)" "f y" #'ee-yazi
-        :desc "Yazi (project)" "f Y" #'ee-yazi-project
-        :desc "Ripgrep search" "s g" #'ee-rg
-         :desc "Lazygit" "g z" #'ee-lazygit))
-#+end_src
-
-** Dired Configuration
-
-Improve dired usability with better clipboard commands.
-- Press ~y Y~ in dired to copy file itself to clipboard (for pasting into apps like Discord)
-
-#+begin_src emacs-lisp
-(after! dired
-  (defun my/dired-copy-file-to-clipboard ()
-    "Copy the file at point to system clipboard for pasting into applications."
+  (defun my/dirvish-zoxide-jump ()
+    "Jump to a zoxide directory."
     (interactive)
-    (let ((file (dired-get-filename)))
-      (if (file-directory-p file)
-          (message "Cannot copy directory to clipboard")
-        (let* ((mime-type (string-trim
-                           (shell-command-to-string
-                            (format "file --mime-type -b %s" (shell-quote-argument file)))))
-               (cmd (format "xclip -selection clipboard -t %s -i %s"
-                            mime-type
-                            (shell-quote-argument file))))
-          (call-process-shell-command cmd nil 0)
-          (message "Copied file to clipboard: %s" (file-name-nondirectory file))))))
+    (unless (executable-find "zoxide")
+      (user-error "zoxide executable not found"))
 
-  (map! :map dired-mode-map
-        :n "y Y" #'my/dired-copy-file-to-clipboard
+    (when-let ((dir
+                (consult--read
+                 (split-string
+                  (shell-command-to-string "zoxide query --list")
+                  "\n" t)
+                 :prompt "Zoxide: "
+                 :sort nil
+                 :require-match t)))
+      (dirvish dir)))
 
-        :n "a" #'dired-create-empty-file
-        )
-  (map! :leader
-         :desc "Dirvish" "d d" #'dirvish))
+  ;; Unbind Dirvish's default mapping first.
+  (define-key dirvish-mode-map (kbd "z") nil)
+
+  ;; Then install ours.
+  (map! :map dirvish-mode-map
+        :n "z" #'my/dirvish-zoxide-jump))
 #+end_src
 
 * Rust Configuration
