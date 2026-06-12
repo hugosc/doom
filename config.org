@@ -564,6 +564,7 @@ when lines wrap.
 ;; Make Evil motions follow wrapped (screen) lines.
 (after! evil
   (setq evil-respect-visual-line-mode t)
+  (setq evil-v$-excludes-newline t)
   ;; Like common Neovim setups: j/k => visual lines, gj/gk => logical lines.
   (map! :map evil-motion-state-map
         "j"  #'evil-next-visual-line
